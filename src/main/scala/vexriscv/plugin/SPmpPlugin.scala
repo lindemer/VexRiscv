@@ -26,10 +26,9 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
     val addr = Reg(UInt(32 bits))
   }
 
-  // TODO: Make this a function instead of another set of registers.
   val region = new Area {
-    val valid = RegInit(False)
-    val start, end = Reg(UInt(32 bits))
+    val valid = Bool
+    val start, end = UInt(32 bits)
   }
   
   val shifted = csr.addr |<< 2
@@ -59,11 +58,16 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
     }
 
     default {
+      region.start := 0
       region.end := shifted
       region.valid := False
     }
 
   }
+
+  def isValid() : Bool = ~(csr.a === OFF)
+  def isLocked() : Bool = csr.l
+
 }
 
 class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
@@ -161,10 +165,10 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         } otherwise {
 
           val s = privilegeService.isSupervisor()
-          val sMatch = spmps.map(spmp => spmp.region.valid &
+          val sMatch = spmps.map(spmp => spmp.isValid() &
                                          spmp.region.start <= address &
                                          spmp.region.end > address &
-                                        (spmp.csr.l | ~s))
+                                        (spmp.isLocked() | ~s))
 
           val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
           val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
