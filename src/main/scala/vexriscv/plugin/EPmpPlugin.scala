@@ -35,9 +35,9 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
     val core = pipeline plug new Area {
 
-      // TODO Rule Locking Bypass (RLB)
-      val mml, mmwp, rlb = RegInit(False)
-      csrService.rw(0x391, 0 -> mml, 1 -> mmwp, 2 -> rlb)
+      // TODO Rule Locking Bypass 
+      val mseccfg = new Area { val MML, MMWP, RLB = RegInit(False) }
+      csrService.rw(0x390, 0 -> mseccfg.MML, 1 -> mseccfg.MMWP, 2 -> mseccfg.RLB)
 
       // Instantiate pmpaddr0 ... pmpaddr# CSRs.
       for (i <- 0 until regions) {
@@ -76,26 +76,35 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         val hits = pmps.map(pmp => pmp.region.valid &
                                    pmp.region.start <= address &
                                    pmp.region.end > address &
-                                  (pmp.region.l | ~m | mml))
+                                  (pmp.region.l | ~m | mseccfg.MML))
 
         when(CountOne(hits) === 0) {
-          port.bus.rsp.allowRead := m & (~mml | ~mmwp)
-          port.bus.rsp.allowWrite := m & (~mml | ~mmwp)
-          port.bus.rsp.allowExecute := m & ~mml
+
+          port.bus.rsp.allowRead := m & (~mseccfg.MML | ~mseccfg.MMWP)
+          port.bus.rsp.allowWrite := m & (~mseccfg.MML | ~mseccfg.MMWP)
+          port.bus.rsp.allowExecute := m & ~mseccfg.MML
+          
         } otherwise {
+
           val r = MuxOH(OHMasking.first(hits), pmps.map(_.region.r))
           val w = MuxOH(OHMasking.first(hits), pmps.map(_.region.w))
           val x = MuxOH(OHMasking.first(hits), pmps.map(_.region.x))
           val l = MuxOH(OHMasking.first(hits), pmps.map(_.region.l))
-          when(~mml) {
+
+          when(~mseccfg.MML) {
+
             port.bus.rsp.allowRead := r 
             port.bus.rsp.allowWrite := w
             port.bus.rsp.allowExecute := x
+
           } otherwise {
+
             port.bus.rsp.allowRead := ((l ^ m) & r) | (l & m & w & x) | (~l & ~r & w)
             port.bus.rsp.allowWrite := ((l ^ m) & w) | (~l & ~r & w & (x | m))
             port.bus.rsp.allowExecute := ((l ^ m) & x) | (l & ~r & w)
+
           }
+
         }
 
         port.bus.rsp.isIoAccess := ioRange(port.bus.rsp.physicalAddress)

@@ -295,7 +295,7 @@ object CsrPluginConfig{
     marchid             = 2,
     mimpid              = 3,
     mhartid             = 0,
-    misaExtensionsInit  = 0x101064, // RV32GCFMU
+    misaExtensionsInit  = 0x0, // TODO
     misaAccess          = CsrAccess.READ_WRITE,
     mtvecAccess         = CsrAccess.READ_WRITE,
     mtvecInit           = mtvecInit,
@@ -310,6 +310,15 @@ object CsrPluginConfig{
     wfiGenAsWait        = true,
     ecallGen            = true,
     userGen             = true,
+    supervisorGen       = true,
+    sscratchGen         = true,
+    stvecAccess         = CsrAccess.READ_WRITE,
+    sepcAccess          = CsrAccess.READ_WRITE,
+    scauseAccess        = CsrAccess.READ_WRITE,
+    sbadaddrAccess      = CsrAccess.READ_WRITE,
+    scycleAccess        = CsrAccess.READ_WRITE,
+    sinstretAccess      = CsrAccess.READ_WRITE,
+    satpAccess          = CsrAccess.READ_WRITE,
     medelegAccess       = CsrAccess.READ_WRITE,
     midelegAccess       = CsrAccess.READ_WRITE
   )
@@ -584,7 +593,7 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
       if(mtvecInit != null) mtvec.base init(mtvecInit / 4)
       val mepc = Reg(UInt(xlen bits))
       val mstatus = new Area{
-        val MIE, MPIE = RegInit(False)
+        val MIE, MPIE, SUM = RegInit(False)
         val MPP = RegInit(U"11")
       }
       val mip = new Area{
@@ -620,7 +629,7 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
       misaAccess(CSR.MISA, xlen-2 -> misa.base , 0 -> misa.extensions)
 
       //Machine CSR
-      READ_WRITE(CSR.MSTATUS,11 -> mstatus.MPP, 7 -> mstatus.MPIE, 3 -> mstatus.MIE)
+      READ_WRITE(CSR.MSTATUS, 18 -> mstatus.SUM, 11 -> mstatus.MPP, 7 -> mstatus.MPIE, 3 -> mstatus.MIE)
       READ_ONLY(CSR.MIP, 11 -> mip.MEIP, 7 -> mip.MTIP)
       READ_WRITE(CSR.MIP, 3 -> mip.MSIP)
       READ_WRITE(CSR.MIE, 11 -> mie.MEIE, 7 -> mie.MTIE, 3 -> mie.MSIE)
