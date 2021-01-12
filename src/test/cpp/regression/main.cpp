@@ -3874,6 +3874,14 @@ int main(int argc, char **argv, char **env) {
 			redo(REDO,WorkspaceRegression("pmp").loadHex(string(REGRESSION_PATH) + "../raw/pmp/build/pmp.hex")->bootAt(0x80000000u)->run(10e3););
 		#endif
 
+		#ifdef EPMP
+			redo(REDO,WorkspaceRegression("epmp").loadHex(string(REGRESSION_PATH) + "../raw/epmp/build/epmp.hex")->bootAt(0x80000000u)->run(10e3););
+		#endif
+
+		#ifdef SPMP
+			redo(REDO,WorkspaceRegression("spmp").loadHex(string(REGRESSION_PATH) + "../raw/spmp/build/spmp.hex")->bootAt(0x80000000u)->run(10e3););
+		#endif
+
 		#ifdef AMO
 			redo(REDO,WorkspaceRegression("amo").withRiscvRef()->loadHex(string(REGRESSION_PATH) + "../raw/amo/build/amo.hex")->bootAt(0x00000000u)->run(10e3););
 		#endif

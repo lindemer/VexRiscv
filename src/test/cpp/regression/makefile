@@ -16,6 +16,8 @@ EBREAK?=no
 FENCEI?=no
 MMU?=yes
 PMP?=no
+EPMP?=no
+SPMP?=no
 SEED?=no
 LRSC?=no
 AMO?=no
@@ -220,6 +222,14 @@ endif
 
 ifeq ($(PMP),yes)
 	ADDCFLAGS += -CFLAGS -DPMP
+endif
+
+ifeq ($(EPMP),yes)
+	ADDCFLAGS += -CFLAGS -DEPMP
+endif
+
+ifeq ($(SPMP),yes)
+	ADDCFLAGS += -CFLAGS -DSPMP
 endif
 
 ifeq ($(MUL),yes)
