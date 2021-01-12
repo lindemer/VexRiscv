@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 Samuel Lindemer <samuel.lindemer@ri.se>
+ * Copyright (c) 2021 Samuel Lindemer <samuel.lindemer@ri.se>
  *
  * SPDX-License-Identifier: MIT
  */
@@ -35,6 +35,10 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
     val core = pipeline plug new Area {
 
+      // TODO Rule Locking Bypass (RLB)
+      val mml, mmwp, rlb = RegInit(False)
+      csrService.rw(0x391, 0 -> mml, 1 -> mmwp, 2 -> rlb)
+
       // Instantiate pmpaddr0 ... pmpaddr# CSRs.
       for (i <- 0 until regions) {
         if (i == 0) {
@@ -68,20 +72,30 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         port.bus.rsp.physicalAddress := address
 
         // Only the first matching PMP region applies.
-        val hits = pmps.map(pmp => pmp.region.valid && 
-                                   pmp.region.start <= address && 
-                                   pmp.region.end > address &&
-                                  (pmp.region.l || ~privilegeService.isMachine()))
+        val m = privilegeService.isMachine()
+        val hits = pmps.map(pmp => pmp.region.valid &
+                                   pmp.region.start <= address &
+                                   pmp.region.end > address &
+                                  (pmp.region.l | ~m | mml))
 
-        // M-mode has full access by default, others have none.
         when(CountOne(hits) === 0) {
-          port.bus.rsp.allowRead := privilegeService.isMachine()
-          port.bus.rsp.allowWrite := privilegeService.isMachine()
-          port.bus.rsp.allowExecute := privilegeService.isMachine()
+          port.bus.rsp.allowRead := m & (~mml | ~mmwp)
+          port.bus.rsp.allowWrite := m & (~mml | ~mmwp)
+          port.bus.rsp.allowExecute := m & ~mml
         } otherwise {
-          port.bus.rsp.allowRead := MuxOH(OHMasking.first(hits), pmps.map(_.region.r))
-          port.bus.rsp.allowWrite := MuxOH(OHMasking.first(hits), pmps.map(_.region.w))
-          port.bus.rsp.allowExecute := MuxOH(OHMasking.first(hits), pmps.map(_.region.x))
+          val r = MuxOH(OHMasking.first(hits), pmps.map(_.region.r))
+          val w = MuxOH(OHMasking.first(hits), pmps.map(_.region.w))
+          val x = MuxOH(OHMasking.first(hits), pmps.map(_.region.x))
+          val l = MuxOH(OHMasking.first(hits), pmps.map(_.region.l))
+          when(~mml) {
+            port.bus.rsp.allowRead := r 
+            port.bus.rsp.allowWrite := w
+            port.bus.rsp.allowExecute := x
+          } otherwise {
+            port.bus.rsp.allowRead := ((l ^ m) & r) | (l & m & w & x) | (~l & ~r & w)
+            port.bus.rsp.allowWrite := ((l ^ m) & w) | (~l & ~r & w & (x | m))
+            port.bus.rsp.allowExecute := ((l ^ m) & x) | (l & ~r & w)
+          }
         }
 
         port.bus.rsp.isIoAccess := ioRange(port.bus.rsp.physicalAddress)

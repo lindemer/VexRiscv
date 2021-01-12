@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 Samuel Lindemer <samuel.lindemer@ri.se>
+ * Copyright (c) 2021 Samuel Lindemer <samuel.lindemer@ri.se>
  *
  * SPDX-License-Identifier: MIT
  */

@@ -5,7 +5,7 @@ import vexriscv.ip.{DataCacheConfig, InstructionCacheConfig}
 import vexriscv.{plugin, VexRiscv, VexRiscvConfig}
 import spinal.core._
 
-object GenSSecure extends App {
+object eGenSecure extends App {
   def cpu() = new VexRiscv(
     config = VexRiscvConfig(
       plugins = List(
@@ -39,7 +39,7 @@ object GenSSecure extends App {
             catchUnaligned   = true
           )
         ),
-        new SPmpPlugin(
+        new EPmpPlugin(
           regions = 16,
           ioRange = _(31 downto 28) === 0xf
         ),
@@ -71,7 +71,7 @@ object GenSSecure extends App {
           mulUnrollFactor = 1,
           divUnrollFactor = 1
         ),
-        new CsrPlugin(CsrPluginConfig.sSecure(0x00000020l)),
+        new CsrPlugin(CsrPluginConfig.secure(0x00000020l)),
         new DebugPlugin(ClockDomain.current.clone(reset = Bool().setName("debugReset"))),
         new BranchPlugin(
           earlyBranch = false,
