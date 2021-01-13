@@ -105,7 +105,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           spmps += SPmpRegister(spmps.last)
         }
         csrService.rw(0x3b0 + i, pmps(i).csr.addr)
-        csrService.rw(0x3c0 + i, spmps(i).csr.addr)
+        csrService.rw(0x910 + i, spmps(i).csr.addr)
       }
 
       // Instantiate pmpcfg0 ... pmpcfg# CSRs.
@@ -122,7 +122,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
            3 -> pmps((i * 4)    ).csr.a,  2 -> pmps((i * 4)    ).csr.x,
            1 -> pmps((i * 4)    ).csr.w,  0 -> pmps((i * 4)    ).csr.r
         )
-        csrService.rw(0x3a4 + i,
+        csrService.rw(0x900 + i,
           31 -> spmps((i * 4) + 3).csr.l, 23 -> spmps((i * 4) + 2).csr.l,
           15 -> spmps((i * 4) + 1).csr.l,  7 -> spmps((i * 4)    ).csr.l,
           30 -> spmps((i * 4) + 3).csr.u, 22 -> spmps((i * 4) + 2).csr.u,
@@ -165,6 +165,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         } otherwise {
 
           val s = privilegeService.isSupervisor()
+          val u = privilegeService.isUser()
           val sMatch = spmps.map(spmp => spmp.isValid() &
                                          spmp.region.start <= address &
                                          spmp.region.end > address &
@@ -173,6 +174,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
           val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
           val sX = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.x))
+          val sU = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.u))
 
           when((m | s) & CountOne(sMatch) === 0) {
 
@@ -182,9 +184,9 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
           } otherwise {
             
-            port.bus.rsp.allowRead := mR & sR
-            port.bus.rsp.allowWrite := mW & sW
-            port.bus.rsp.allowExecute := mX & sX
+            port.bus.rsp.allowRead := mR & sR & (u ^ sU)
+            port.bus.rsp.allowWrite := mW & sW & (u ^ sU)
+            port.bus.rsp.allowExecute := mX & sX & (u ^ sU)
           
           }
         }
