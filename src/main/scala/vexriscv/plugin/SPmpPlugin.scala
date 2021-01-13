@@ -21,7 +21,7 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
   // Software-accessible CSR interface
   val csr = new Area {
     val r, w, x = Reg(Bool)
-    val u, l = RegInit(False)
+    val l = RegInit(False)
     val a = Reg(UInt(2 bits)) init(0)
     val addr = Reg(UInt(32 bits))
   }
@@ -125,8 +125,6 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         csrService.rw(0x900 + i,
           31 -> spmps((i * 4) + 3).csr.l, 23 -> spmps((i * 4) + 2).csr.l,
           15 -> spmps((i * 4) + 1).csr.l,  7 -> spmps((i * 4)    ).csr.l,
-          30 -> spmps((i * 4) + 3).csr.u, 22 -> spmps((i * 4) + 2).csr.u,
-          14 -> spmps((i * 4) + 1).csr.u,  6 -> spmps((i * 4)    ).csr.u,
           27 -> spmps((i * 4) + 3).csr.a, 26 -> spmps((i * 4) + 3).csr.x,
           25 -> spmps((i * 4) + 3).csr.w, 24 -> spmps((i * 4) + 3).csr.r,
           19 -> spmps((i * 4) + 2).csr.a, 18 -> spmps((i * 4) + 2).csr.x,
@@ -174,7 +172,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
           val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
           val sX = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.x))
-          val sU = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.u))
+          val sL = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.l))
 
           when((m | s) & CountOne(sMatch) === 0) {
 
@@ -184,9 +182,9 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
           } otherwise {
             
-            port.bus.rsp.allowRead := mR & sR & (u ^ sU)
-            port.bus.rsp.allowWrite := mW & sW & (u ^ sU)
-            port.bus.rsp.allowExecute := mX & sX & (u ^ sU)
+            port.bus.rsp.allowRead := mR & sR & (u ^ sL)
+            port.bus.rsp.allowWrite := mW & sW & (u ^ sL)
+            port.bus.rsp.allowExecute := mX & sX & (u ^ sL)
           
           }
         }
