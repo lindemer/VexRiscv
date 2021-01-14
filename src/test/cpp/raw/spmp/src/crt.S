@@ -4,9 +4,18 @@
  * SPDX-License-Identifier: MIT
  */
 
-#define TEST_ID    x28
-#define STRAP_RA   x29
-#define MTRAP_RA   x30
+#define TEST_ID      x28
+#define STRAP_RETURN x6
+#define STRAP_CAUSE  x7
+#define MTRAP_RETURN x29
+#define MTRAP_CAUSE  x30
+
+#define IACCE_FAULT  1
+#define IPAGE_FAULT 12
+#define LACCE_FAULT  5
+#define LPAGE_FAULT 13
+#define SACCE_FAULT  7
+#define SPAGE_FAULT 15
 
 #define PMPCFG0    0x00000f0d
 #define PMPADDR0   0x20000000 // TOR RX
@@ -34,33 +43,35 @@
 #define spmpaddr14 0x91d
 #define spmpaddr15 0x91e
 
-#define SPMPCFG0   0x00000000
-#define SPMPCFG1   0x00000000
-#define SPMPCFG2   0x00000000
-#define SPMPCFG3   0x00000000
+#define SPMPCFG0   0x1b1a1918
+#define SPMPCFG1   0x1f1e1d1c
+#define SPMPCFG2   0x9b9a9998
+#define SPMPCFG3   0x9f9e9d9c
 
-#define SPMPADDR0  0x00000000 // OFF
-#define SPMPADDR1  0x00000000 // OFF
-#define SPMPADDR2  0x00000000 // OFF
-#define SPMPADDR3  0x00000000 // OFF
-#define SPMPADDR4  0x00000000 // OFF
-#define SPMPADDR5  0x00000000 // OFF
-#define SPMPADDR6  0x00000000 // OFF
-#define SPMPADDR7  0x00000000 // OFF
-#define SPMPADDR8  0x00000000 // OFF
-#define SPMPADDR9  0x00000000 // OFF
-#define SPMPADDR10 0x00000000 // OFF
-#define SPMPADDR11 0x00000000 // OFF
-#define SPMPADDR12 0x00000000 // OFF
-#define SPMPADDR13 0x00000000 // OFF
-#define SPMPADDR14 0x00000000 // OFF
-#define SPMPADDR15 0x00000000 // OFF
+#define SPMPADDR0  0x22000000 // NAPOT  
+#define SPMPADDR1  0x22000008 // NAPOT  R
+#define SPMPADDR2  0x22000010 // NAPOT   W
+#define SPMPADDR3  0x22000018 // NAPOT  RW
+#define SPMPADDR4  0x22000020 // NAPOT    X
+#define SPMPADDR5  0x22000028 // NAPOT  R X
+#define SPMPADDR6  0x22000030 // NAPOT   WX
+#define SPMPADDR7  0x22000038 // NAPOT  RWX
+#define SPMPADDR8  0x22000040 // NAPOT L
+#define SPMPADDR9  0x22000048 // NAPOT LR  
+#define SPMPADDR10 0x22000050 // NAPOT L W
+#define SPMPADDR11 0x22000058 // NAPOT LRW
+#define SPMPADDR12 0x22000060 // NAPOT L  X
+#define SPMPADDR13 0x22000068 // NAPOT LR X
+#define SPMPADDR14 0x22000070 // NAPOT L WX
+#define SPMPADDR15 0x22000078 // NAPOT LRWX
 
 .global _start
 _start:
     li TEST_ID, -1
-    la MTRAP_RA, fail
-    la STRAP_RA, fail
+    la MTRAP_RETURN, fail
+    li MTRAP_CAUSE, 0
+    la STRAP_RETURN, fail
+    li STRAP_CAUSE, 0
 
     // global machine trap handler
     la x1, mtrap
@@ -89,39 +100,90 @@ _start:
 
 .global mtrap
 mtrap:
-    csrw mepc, MTRAP_RA
+    csrr x1, mcause
+    bne x1, MTRAP_CAUSE, fail
+    csrw mepc, MTRAP_RETURN
     mret
 
 .global strap
 strap:
-    csrw sepc, STRAP_RA
+    csrr x1, scause
+    bne x1, STRAP_CAUSE, fail
+    csrw sepc, STRAP_RETURN
     sret
 
 test0:
     li TEST_ID, 0
-    la MTRAP_RA, fail
-    la STRAP_RA, fail
+    la MTRAP_RETURN, fail
+    la STRAP_RETURN, fail
 
     // global supervisor trap handler
     la x1, strap
     csrw stvec, x1
-    la STRAP_RA, fail
 
     // initialize sPMP
     li x1, SPMPCFG0
     csrw spmpcfg0, x1
+    li x1, SPMPCFG1
+    csrw spmpcfg1, x1
+    li x1, SPMPCFG2
+    csrw spmpcfg2, x1
+    li x1, SPMPCFG3
+    csrw spmpcfg3, x1
     li x1, SPMPADDR0
     csrw spmpaddr0, x1
     li x1, SPMPADDR1
     csrw spmpaddr1, x1
+    li x1, SPMPADDR2
+    csrw spmpaddr2, x1
+    li x1, SPMPADDR3
+    csrw spmpaddr3, x1
+    li x1, SPMPADDR4
+    csrw spmpaddr4, x1
+    li x1, SPMPADDR5
+    csrw spmpaddr5, x1
+    li x1, SPMPADDR6
+    csrw spmpaddr6, x1
+    li x1, SPMPADDR7
+    csrw spmpaddr7, x1
+    li x1, SPMPADDR8
+    csrw spmpaddr8, x1
+    li x1, SPMPADDR9
+    csrw spmpaddr9, x1
+    li x1, SPMPADDR10
+    csrw spmpaddr10, x1
+    li x1, SPMPADDR11
+    csrw spmpaddr11, x1
+    li x1, SPMPADDR12
+    csrw spmpaddr12, x1
+    li x1, SPMPADDR13
+    csrw spmpaddr13, x1
+    li x1, SPMPADDR14
+    csrw spmpaddr14, x1
+    li x1, SPMPADDR15
+    csrw spmpaddr15, x1
 
     // attempt M-mode operation
-    la MTRAP_RA, test1
+    la MTRAP_RETURN, test1
+    li MTRAP_CAUSE, 2
     mret
     j fail
 
+// attempt unlocked sPMP and PMP accesses from S-mode
 test1:
-    j pass 
+    j pass
+
+// attempt locked sPMP accesses from S-mode
+test2:
+    j pass
+
+// attempt locked sPMP and PMP accesses from U-mode
+test3:
+    j pass
+
+// attempt unlocked sPMP accesses from U-mode
+test4:
+    j pass
     
 fail:
     li x2, 0xf00fff24

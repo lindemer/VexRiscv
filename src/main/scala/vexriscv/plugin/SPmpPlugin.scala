@@ -172,7 +172,6 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           val sX = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.x))
           val sL = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.l))
 
-          // FIXME: s is not True.
           when((m | s) & (CountOne(sMatch) === 0)) {
 
             port.bus.rsp.allowRead := mR
