@@ -159,6 +159,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           port.bus.rsp.allowRead := m
           port.bus.rsp.allowWrite := m
           port.bus.rsp.allowExecute := m
+          port.bus.rsp.isPaging := False
         
         } otherwise {
 
@@ -179,12 +180,14 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
             port.bus.rsp.allowRead := mR
             port.bus.rsp.allowWrite := mW
             port.bus.rsp.allowExecute := mX
+            port.bus.rsp.isPaging := False
 
           } otherwise {
             
             port.bus.rsp.allowRead := mR & sR & (u ^ sL)
             port.bus.rsp.allowWrite := mW & sW & (u ^ sL)
             port.bus.rsp.allowExecute := mX & sX & (u ^ sL)
+            port.bus.rsp.isPaging := True
           
           }
         }

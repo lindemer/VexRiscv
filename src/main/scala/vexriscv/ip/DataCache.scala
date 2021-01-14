@@ -554,12 +554,13 @@ class DataCache(p : DataCacheConfig) extends Component{
     val badPermissions = (!mmuRsp.allowWrite && request.wr) || (!mmuRsp.allowRead && (!request.wr || isAmo))
     val loadStoreFault = io.cpu.writeBack.isValid && (mmuRsp.exception || badPermissions)
 
-    if (catchAccessError) when(mmuRsp.isIoAccess) {
+    io.cpu.writeBack.accessError := False
+    when(mmuRsp.isIoAccess) {
       io.cpu.writeBack.data := io.mem.rsp.data
-      io.cpu.writeBack.accessError := io.mem.rsp.valid && io.mem.rsp.error
+      if (catchAccessError) io.cpu.writeBack.accessError := io.mem.rsp.valid && io.mem.rsp.error
     } otherwise {
       io.cpu.writeBack.data := dataMux
-      io.cpu.writeBack.accessError := (waysHits & B(tagsReadRsp.map(_.error))) =/= 0 || (loadStoreFault && !mmuRsp.isPaging)
+      if (catchAccessError) io.cpu.writeBack.accessError := (waysHits & B(tagsReadRsp.map(_.error))) =/= 0 || (loadStoreFault && !mmuRsp.isPaging)
     }
 
     io.cpu.redo := False

@@ -108,6 +108,7 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         }
 
         port.bus.rsp.isIoAccess := ioRange(port.bus.rsp.physicalAddress)
+        port.bus.rsp.isPaging := False
         port.bus.rsp.exception := False
         port.bus.rsp.refilling := False
         port.bus.busy := False
