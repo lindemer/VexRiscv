@@ -65,9 +65,6 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
 
   }
 
-  def isValid() : Bool = ~(csr.a === OFF)
-  def isLocked() : Bool = csr.l
-
 }
 
 class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
@@ -165,17 +162,18 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
           val s = privilegeService.isSupervisor()
           val u = privilegeService.isUser()
-          val sMatch = spmps.map(spmp => spmp.isValid() &
+          val sMatch = spmps.map(spmp => spmp.region.valid &
                                          spmp.region.start <= address &
                                          spmp.region.end > address &
-                                        (spmp.isLocked() | ~s))
+                                        (spmp.csr.l | ~s))
 
           val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
           val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
           val sX = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.x))
           val sL = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.l))
 
-          when((m | s) & CountOne(sMatch) === 0) {
+          // FIXME: s is not True.
+          when((m | s) & (CountOne(sMatch) === 0)) {
 
             port.bus.rsp.allowRead := mR
             port.bus.rsp.allowWrite := mW
