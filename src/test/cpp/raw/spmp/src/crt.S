@@ -202,7 +202,6 @@ test1:
     sw x7, 0x00(x6) 
     j fail
 
-// attempt locked sPMP write from S-mode
 test2:
     li TEST_ID, 2
     la MEPC, fail
@@ -240,15 +239,75 @@ test3:
     j fail
 
 test4:
-    j pass
+    li TEST_ID, 4
+    la MEPC, fail
+    la SEPC, test5
 
-/*
-// attempt locked sPMP and PMP accesses from U-mode
-// attempt unlocked sPMP accesses from U-mode
+    // attempt execution from restricted locked sPMP region
+    li SCAUSE, INST_PAGE
+    li x6, 0x88000020 
+    jr x6
+    j fail
+
 test5:
-    j pass
-*/
+    li TEST_ID, 5
+    la MEPC, fail
+    la SEPC, fail
+
+    // jump to U-mode
+    la x6, test6
+    csrw sepc, x6
+    li x6, 0x80
+    csrc sstatus, x6
+    sret
+
+test6:
+    li TEST_ID, 6
+    la MEPC, fail
+
+    // attempt permitted writes to sPMP regions
+    la SEPC, fail
+    li x6, 0x88000000
+    sw x7, 0x08(x6)
+    sw x7, 0x0c(x6)
+    sw x7, 0x18(x6)
+    sw x7, 0x1c(x6)
+
+    // attempt write to restricted sPMP region
+    la SEPC, test7
+    li SCAUSE, STORE_PAGE
+    sw x7, 0x10(x6)
+    j fail
+
+test7:
+    li TEST_ID, 7
+    la MEPC, fail
+
+    // attempt permitted reads to sPMP regions
+    la SEPC, fail
+    li x6, 0x88000000
+    lw x7, 0x04(x6)
+    lw x7, 0x0c(x6)
+    lw x7, 0x14(x6)
+    lw x7, 0x1c(x6)
+
+    // attempt read from restricted sPMP region
+    la SEPC, test8
+    li SCAUSE, LOAD_PAGE
+    lw x7, 0x00(x6)
+    j fail
     
+test8:
+    li TEST_ID, 8
+    la MEPC, fail
+    la SEPC, pass
+
+    // attempt execution from restricted sPMP region
+    li SCAUSE, INST_PAGE
+    li x6, 0x88000000 
+    jr x6
+    j fail
+
 fail:
     li x7, 0xf00fff24
     sw TEST_ID, 0(x7)
