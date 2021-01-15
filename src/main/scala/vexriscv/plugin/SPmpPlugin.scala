@@ -21,7 +21,7 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
   // Software-accessible CSR interface
   val csr = new Area {
     val r, w, x = Reg(Bool)
-    val l = RegInit(False)
+    val l = Reg(Bool)
     val a = Reg(UInt(2 bits)) init(0)
     val addr = Reg(UInt(32 bits))
   }
@@ -64,7 +64,6 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
     }
 
   }
-
 }
 
 class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
@@ -165,14 +164,14 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           val sMatch = spmps.map(spmp => spmp.region.valid &
                                          spmp.region.start <= address &
                                          spmp.region.end > address &
-                                        (spmp.csr.l | ~s))
+                                        (spmp.csr.l | ~s) & ~m)
 
           val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
           val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
           val sX = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.x))
           val sL = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.l))
 
-          when((m | s) & (CountOne(sMatch) === 0)) {
+          when(CountOne(sMatch) === 0) {
 
             port.bus.rsp.allowRead := mR
             port.bus.rsp.allowWrite := mW
