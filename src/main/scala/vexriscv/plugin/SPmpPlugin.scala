@@ -145,50 +145,50 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         port.bus.rsp.physicalAddress := address
 
         // Only the first matching PMP region applies.
-        val m = privilegeService.isMachine()
-        val mMatch = pmps.map(pmp => pmp.region.valid &
-                                     pmp.region.start <= address &
-                                     pmp.region.end > address &
-                                    (pmp.region.locked | ~m))
+        val machineMode = privilegeService.isMachine()
+        val machineMatch = pmps.map(pmp => pmp.region.valid &
+                                           pmp.region.start <= address &
+                                           pmp.region.end > address &
+                                          (pmp.region.locked | ~machineMode))
 
-        val mR = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.r))
-        val mW = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.w))
-        val mX = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.x))
+        val machineRead = MuxOH(OHMasking.first(machineMatch), pmps.map(_.state.r))
+        val machineWrite = MuxOH(OHMasking.first(machineMatch), pmps.map(_.state.w))
+        val machineExecute = MuxOH(OHMasking.first(machineMatch), pmps.map(_.state.x))
 
-        // M-mode has full access by default, others have none.
-        when(CountOne(mMatch) === 0) {
+        // machineMode-mode has full access by default, others have none.
+        when(CountOne(machineMatch) === 0) {
 
-          port.bus.rsp.allowRead := m
-          port.bus.rsp.allowWrite := m
-          port.bus.rsp.allowExecute := m
+          port.bus.rsp.allowRead := machineMode
+          port.bus.rsp.allowWrite := machineMode
+          port.bus.rsp.allowExecute := machineMode
           port.bus.rsp.isPaging := False
         
         } otherwise {
 
-          val s = privilegeService.isSupervisor()
-          val u = privilegeService.isUser()
-          val sMatch = spmps.map(spmp => spmp.region.valid &
-                                         spmp.region.start <= address &
-                                         spmp.region.end > address &
-                                        (spmp.region.locked | ~s) & ~m)
+          val userMode = privilegeService.isUser()
+          val supervisorMatch = spmps.map(spmp => spmp.region.valid &
+                                                  spmp.region.start <= address &
+                                                  spmp.region.end > address &
+                                                 (spmp.region.locked ^ userMode) & 
+                                                  ~machineMode)
 
-          val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
-          val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
-          val sX = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.x))
-          val sL = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.l))
+          val supervisorRead = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.r))
+          val supervisorWrite = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.w))
+          val supervisorExecute = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.x))
+          val supervisorLocked = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.l))
 
-          when(CountOne(sMatch) === 0) {
+          when(CountOne(supervisorMatch) === 0) {
 
-            port.bus.rsp.allowRead := mR
-            port.bus.rsp.allowWrite := mW
-            port.bus.rsp.allowExecute := mX
+            port.bus.rsp.allowRead := machineRead
+            port.bus.rsp.allowWrite := machineWrite
+            port.bus.rsp.allowExecute := machineExecute
             port.bus.rsp.isPaging := False
 
           } otherwise {
             
-            port.bus.rsp.allowRead := mR & sR & (u ^ sL)
-            port.bus.rsp.allowWrite := mW & sW & (u ^ sL)
-            port.bus.rsp.allowExecute := mX & sX & (u ^ sL)
+            port.bus.rsp.allowRead := machineRead & supervisorRead & (userMode ^ supervisorLocked)
+            port.bus.rsp.allowWrite := machineWrite & supervisorWrite & (userMode ^ supervisorLocked)
+            port.bus.rsp.allowExecute := machineExecute & supervisorExecute & (userMode ^ supervisorLocked)
             port.bus.rsp.isPaging := True
           
           }

@@ -19,53 +19,49 @@
 #define STORE_ACCESS  7
 #define STORE_PAGE   15
 
-#define PMPCFG0    0x00000f0d
-#define PMPADDR0   0x20000000 // TOR  RX
-#define PMPADDR1   0x30000000 // TOR RWX
+#define ampcfg0   0x900
+#define ampcfg1   0x901
+#define ampcfg2   0x902
+#define ampcfg3   0x903
 
-#define spmpcfg0   0x900
-#define spmpcfg1   0x901
-#define spmpcfg2   0x902
-#define spmpcfg3   0x903
+#define ampaddr0  0x910
+#define ampaddr1  0x911
+#define ampaddr2  0x912
+#define ampaddr3  0x913
+#define ampaddr4  0x914
+#define ampaddr5  0x915
+#define ampaddr6  0x916
+#define ampaddr7  0x917
+#define ampaddr8  0x918
+#define ampaddr9  0x919
+#define ampaddr10 0x91a
+#define ampaddr11 0x91b
+#define ampaddr12 0x91c
+#define ampaddr13 0x91d
+#define ampaddr14 0x91e
+#define ampaddr15 0x91f
 
-#define spmpaddr0  0x910
-#define spmpaddr1  0x911
-#define spmpaddr2  0x912
-#define spmpaddr3  0x913
-#define spmpaddr4  0x914
-#define spmpaddr5  0x915
-#define spmpaddr6  0x916
-#define spmpaddr7  0x917
-#define spmpaddr8  0x918
-#define spmpaddr9  0x919
-#define spmpaddr10 0x91a
-#define spmpaddr11 0x91b
-#define spmpaddr12 0x91c
-#define spmpaddr13 0x91d
-#define spmpaddr14 0x91e
-#define spmpaddr15 0x91f
+#define AMPCFG0   0x13121110
+#define AMPCFG1   0x17161514
+#define AMPCFG2   0x93929190
+#define AMPCFG3   0x97969594
 
-#define SPMPCFG0   0x13121110
-#define SPMPCFG1   0x17161514
-#define SPMPCFG2   0x93929190
-#define SPMPCFG3   0x97969594
-
-#define SPMPADDR0  0x22000000 // NA4  
-#define SPMPADDR1  0x22000001 // NA4  R
-#define SPMPADDR2  0x22000002 // NA4   W
-#define SPMPADDR3  0x22000003 // NA4  RW
-#define SPMPADDR4  0x22000004 // NA4    X
-#define SPMPADDR5  0x22000005 // NA4  R X
-#define SPMPADDR6  0x22000006 // NA4   WX
-#define SPMPADDR7  0x22000007 // NA4  RWX
-#define SPMPADDR8  0x22000008 // NA4 L
-#define SPMPADDR9  0x22000009 // NA4 LR
-#define SPMPADDR10 0x2200000a // NA4 L W
-#define SPMPADDR11 0x2200000b // NA4 LRW
-#define SPMPADDR12 0x2200000c // NA4 L  X
-#define SPMPADDR13 0x2200000d // NA4 LR X
-#define SPMPADDR14 0x2200000e // NA4 L WX
-#define SPMPADDR15 0x2200000f // NA4 LRWX
+#define AMPADDR0  0x22000000 // NA4  
+#define AMPADDR1  0x22000001 // NA4  R
+#define AMPADDR2  0x22000002 // NA4   W
+#define AMPADDR3  0x22000003 // NA4  RW
+#define AMPADDR4  0x22000004 // NA4    X
+#define AMPADDR5  0x22000005 // NA4  R X
+#define AMPADDR6  0x22000006 // NA4   WX
+#define AMPADDR7  0x22000007 // NA4  RWX
+#define AMPADDR8  0x22000008 // NA4 L
+#define AMPADDR9  0x22000009 // NA4 LR
+#define AMPADDR10 0x2200000a // NA4 L W
+#define AMPADDR11 0x2200000b // NA4 LRW
+#define AMPADDR12 0x2200000c // NA4 L  X
+#define AMPADDR13 0x2200000d // NA4 LR X
+#define AMPADDR14 0x2200000e // NA4 L WX
+#define AMPADDR15 0x2200000f // NA4 LRWX
 
 .global _start
 _start:
@@ -82,14 +78,6 @@ _start:
     // exceptions 12, 13, 15 (page faults)
     li x6, 0xb000
     csrw medeleg, x6
-
-    // initialize PMP
-    li x6, PMPCFG0
-    csrw pmpcfg0, x6
-    li x6, PMPADDR0
-    csrw pmpaddr0, x6
-    li x6, PMPADDR1
-    csrw pmpaddr1, x6
 
     // jump into S-mode
     la x6, test0
@@ -123,47 +111,47 @@ test0:
     la x6, strap
     csrw stvec, x6
 
-    // initialize sPMP
-    li x6, SPMPCFG0
-    csrw spmpcfg0, x6
-    li x6, SPMPCFG1
-    csrw spmpcfg1, x6
-    li x6, SPMPCFG2
-    csrw spmpcfg2, x6
-    li x6, SPMPCFG3
-    csrw spmpcfg3, x6
-    li x6, SPMPADDR0
-    csrw spmpaddr0, x6
-    li x6, SPMPADDR1
-    csrw spmpaddr1, x6
-    li x6, SPMPADDR2
-    csrw spmpaddr2, x6
-    li x6, SPMPADDR3
-    csrw spmpaddr3, x6
-    li x6, SPMPADDR4
-    csrw spmpaddr4, x6
-    li x6, SPMPADDR5
-    csrw spmpaddr5, x6
-    li x6, SPMPADDR6
-    csrw spmpaddr6, x6
-    li x6, SPMPADDR7
-    csrw spmpaddr7, x6
-    li x6, SPMPADDR8
-    csrw spmpaddr8, x6
-    li x6, SPMPADDR9
-    csrw spmpaddr9, x6
-    li x6, SPMPADDR10
-    csrw spmpaddr10, x6
-    li x6, SPMPADDR11
-    csrw spmpaddr11, x6
-    li x6, SPMPADDR12
-    csrw spmpaddr12, x6
-    li x6, SPMPADDR13
-    csrw spmpaddr13, x6
-    li x6, SPMPADDR14
-    csrw spmpaddr14, x6
-    li x6, SPMPADDR15
-    csrw spmpaddr15, x6
+    // initialize amp
+    li x6, AMPCFG0
+    csrw ampcfg0, x6
+    li x6, AMPCFG1
+    csrw ampcfg1, x6
+    li x6, AMPCFG2
+    csrw ampcfg2, x6
+    li x6, AMPCFG3
+    csrw ampcfg3, x6
+    li x6, AMPADDR0
+    csrw ampaddr0, x6
+    li x6, AMPADDR1
+    csrw ampaddr1, x6
+    li x6, AMPADDR2
+    csrw ampaddr2, x6
+    li x6, AMPADDR3
+    csrw ampaddr3, x6
+    li x6, AMPADDR4
+    csrw ampaddr4, x6
+    li x6, AMPADDR5
+    csrw ampaddr5, x6
+    li x6, AMPADDR6
+    csrw ampaddr6, x6
+    li x6, AMPADDR7
+    csrw ampaddr7, x6
+    li x6, AMPADDR8
+    csrw ampaddr8, x6
+    li x6, AMPADDR9
+    csrw ampaddr9, x6
+    li x6, AMPADDR10
+    csrw ampaddr10, x6
+    li x6, AMPADDR11
+    csrw ampaddr11, x6
+    li x6, AMPADDR12
+    csrw ampaddr12, x6
+    li x6, AMPADDR13
+    csrw ampaddr13, x6
+    li x6, AMPADDR14
+    csrw ampaddr14, x6
+    li x6, AMPADDR15
+    csrw ampaddr15, x6
 
     // attempt M-mode operation
     la MEPC, test1
@@ -175,7 +163,7 @@ test1:
     li TEST_ID, 1
     la MEPC, fail
 
-    // attempt reads and writes to unlocked sPMP regions
+    // attempt reads and writes to unlocked amp regions
     la SEPC, fail
     li x6, 0x88000000
     lw x7, 0x00(x6)
@@ -206,7 +194,7 @@ test2:
     li TEST_ID, 2
     la MEPC, fail
 
-    // attempt permitted writes to locked sPMP regions
+    // attempt permitted writes to locked amp regions
     la SEPC, fail
     li x6, 0x88000000
     sw x7, 0x28(x6)
@@ -214,7 +202,7 @@ test2:
     sw x7, 0x38(x6)
     sw x7, 0x3c(x6)
 
-    // attempt write to restricted locked sPMP region
+    // attempt write to restricted locked amp region
     la SEPC, test3
     li SCAUSE, STORE_PAGE
     sw x7, 0x30(x6)
@@ -224,7 +212,7 @@ test3:
     li TEST_ID, 3
     la MEPC, fail
 
-    // attempt permitted reads to locked sPMP regions
+    // attempt permitted reads to locked amp regions
     la SEPC, fail
     li x6, 0x88000000
     lw x7, 0x24(x6)
@@ -232,7 +220,7 @@ test3:
     lw x7, 0x34(x6)
     lw x7, 0x3c(x6)
 
-    // attempt read from restricted locked sPMP region
+    // attempt read from restricted locked amp region
     la SEPC, test4
     li SCAUSE, LOAD_PAGE
     lw x7, 0x20(x6)
@@ -243,7 +231,7 @@ test4:
     la MEPC, fail
     la SEPC, test5
 
-    // attempt execution from restricted locked sPMP region
+    // attempt execution from restricted locked amp region
     li SCAUSE, INST_PAGE
     li x6, 0x88000020 
     jr x6
@@ -265,7 +253,7 @@ test6:
     li TEST_ID, 6
     la MEPC, fail
 
-    // attempt permitted writes to sPMP regions
+    // attempt permitted writes to amp regions
     la SEPC, fail
     li x6, 0x88000000
     sw x7, 0x08(x6)
@@ -273,7 +261,7 @@ test6:
     sw x7, 0x18(x6)
     sw x7, 0x1c(x6)
 
-    // attempt write to restricted sPMP region
+    // attempt write to restricted amp region
     la SEPC, test7
     li SCAUSE, STORE_PAGE
     sw x7, 0x10(x6)
@@ -283,7 +271,7 @@ test7:
     li TEST_ID, 7
     la MEPC, fail
 
-    // attempt permitted reads to sPMP regions
+    // attempt permitted reads to amp regions
     la SEPC, fail
     li x6, 0x88000000
     lw x7, 0x04(x6)
@@ -291,7 +279,7 @@ test7:
     lw x7, 0x14(x6)
     lw x7, 0x1c(x6)
 
-    // attempt read from restricted sPMP region
+    // attempt read from restricted amp region
     la SEPC, test8
     li SCAUSE, LOAD_PAGE
     lw x7, 0x00(x6)
@@ -302,7 +290,7 @@ test8:
     la MEPC, fail
     la SEPC, pass
 
-    // attempt execution from restricted sPMP region
+    // attempt execution from restricted amp region
     li SCAUSE, INST_PAGE
     li x6, 0x88000000 
     jr x6

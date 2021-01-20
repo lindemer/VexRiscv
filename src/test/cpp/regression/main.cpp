@@ -3883,7 +3883,7 @@ int main(int argc, char **argv, char **env) {
 		#endif
 
 		#ifdef AMP
-			redo(REDO,WorkspaceRegression("amp").loadHex(string(REGRESSION_PATH) + "../raw/apmp/build/amp.hex")->bootAt(0x80000000u)->run(10e3););
+			redo(REDO,WorkspaceRegression("amp").loadHex(string(REGRESSION_PATH) + "../raw/amp/build/amp.hex")->bootAt(0x80000000u)->run(10e3););
 		#endif
 
 		#ifdef AMO

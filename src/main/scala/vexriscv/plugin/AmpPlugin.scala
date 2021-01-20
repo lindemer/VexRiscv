@@ -11,57 +11,110 @@ import spinal.core._
 import spinal.lib._
 import scala.collection.mutable.ArrayBuffer
 
-case class AmpRegister(previous : AmpRegister) extends Area {
+case class AmpRegister(previous : AmpRegister, privilegeService : PrivilegeService)
+  extends Area {
 
   def OFF = 0
   def TOR = 1
   def NA4 = 2
   def NAPOT = 3
 
-  val csr = new Area {
+  val state = new Area {
     val r, w, x = Reg(Bool)
-    val l = Reg(Bool)
+    val l, d, m = RegInit(False)
     val a = Reg(UInt(2 bits)) init(0)
     val addr = Reg(UInt(32 bits))
   }
 
+  // CSR writes connect to these signals rather than the internal state
+  // registers. This makes locking and WARL possible.
+  val csr = new Area {
+    val r, w, x = Bool
+    val l, d, m = Bool
+    val a = UInt(2 bits)
+    val addr = UInt(32 bits)
+  }
+
+  // Last valid assignment wins; nothing happens if a user-initiated write did 
+  // not occur on this clock cycle.
+  val machineMode = privilegeService.isMachine()
+  when(machineMode | state.d) {
+    csr.r    := state.r
+    csr.w    := state.w
+    csr.x    := state.x
+    csr.l    := state.l
+    csr.d    := state.d
+    csr.m    := state.m
+    csr.a    := state.a
+    csr.addr := state.addr
+  } otherwise {
+
+    // TODO: Verify that this does not trigger a CSR write on the next cycle.
+    csr.r    := False
+    csr.w    := False
+    csr.x    := False
+    csr.l    := False
+    csr.d    := False
+    csr.m    := False
+    csr.a    := U"2'0"
+    csr.addr := U"32'0"
+  }
+
+  // Computed AMP region bounds
   val region = new Area {
-    val valid = Bool
+    val valid, locked, delegated, modified = Bool
     val start, end = UInt(32 bits)
   }
-  
-  val shifted = csr.addr |<< 2
+
+  when(~state.l & (machineMode | state.d)) {
+    state.r    := csr.r
+    state.w    := csr.w
+    state.x    := csr.x
+    state.m    := csr.m
+    state.a    := csr.a
+    state.addr := csr.addr
+
+    when(machineMode) {
+      state.d := csr.d
+      state.l := csr.l
+
+      // TODO: Verify that this doesn't break the truth table.
+      if (csr.l == True & csr.a == TOR) {
+        previous.state.l := True
+      }
+    }
+  }
+
+  val shifted = state.addr |<< 2
+  val mask = state.addr & ~(state.addr + 1)
+  val masked = (state.addr & ~mask) |<< 2
+
+  // AMP changes take effect two clock cycles after the initial CSR write (i.e.,
+  // settings propagate from csr -> state -> region).
+  region.locked := state.l
+  region.delegated := state.d
+  region.modified := state.m
   region.valid := True
 
   switch(csr.a) {
-
     is(TOR) {
-      if (previous == null) {
-        region.start := 0
-      } else {
-        region.start := previous.region.end
-      }
+      if (previous == null) region.start := 0
+      else region.start := previous.region.end
       region.end := shifted
     }
-
     is(NA4) {
       region.start := shifted
       region.end := shifted + 4
     }
-
     is(NAPOT) {
-      val mask = csr.addr & ~(csr.addr + 1)
-      val masked = (csr.addr & ~mask) |<< 2
       region.start := masked
       region.end := masked + ((mask + 1) |<< 3)
     }
-
     default {
       region.start := 0
       region.end := shifted
       region.valid := False
     }
-
   }
 }
 
@@ -70,8 +123,7 @@ class AmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
   // Each pmpcfg# CSR configures four regions.
   assert((regions % 4) == 0)
    
-  val pmps = ArrayBuffer[PmpRegister]()
-  val spmps = ArrayBuffer[AmpRegister]()
+  val amps = ArrayBuffer[AmpRegister]()
   val portsInfo = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
@@ -93,108 +145,133 @@ class AmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       // Instantiate pmpaddr0 ... pmpaddr# CSRs.
       for (i <- 0 until regions) {
         if (i == 0) {
-          pmps += PmpRegister(null)
-          spmps += AmpRegister(null)
+          amps += AmpRegister(null, privilegeService)
         } else {
-          pmps += PmpRegister(pmps.last)
-          spmps += AmpRegister(spmps.last)
+          amps += AmpRegister(amps.last, privilegeService)
         }
-        csrService.r(0x3b0 + i, pmps(i).state.addr)
-        csrService.w(0x3b0 + i, pmps(i).csr.addr)
-        csrService.rw(0x910 + i, spmps(i).csr.addr)
+        csrService.r(0x910 + i, amps(i).state.addr)
+        csrService.w(0x910 + i, amps(i).csr.addr)
       }
 
       // Instantiate pmpcfg0 ... pmpcfg# CSRs.
       for (i <- 0 until (regions / 4)) {
-        csrService.r(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).state.l, 23 -> pmps((i * 4) + 2).state.l,
-          15 -> pmps((i * 4) + 1).state.l,  7 -> pmps((i * 4)    ).state.l,
-          27 -> pmps((i * 4) + 3).state.a, 26 -> pmps((i * 4) + 3).state.x,
-          25 -> pmps((i * 4) + 3).state.w, 24 -> pmps((i * 4) + 3).state.r,
-          19 -> pmps((i * 4) + 2).state.a, 18 -> pmps((i * 4) + 2).state.x,
-          17 -> pmps((i * 4) + 2).state.w, 16 -> pmps((i * 4) + 2).state.r,
-          11 -> pmps((i * 4) + 1).state.a, 10 -> pmps((i * 4) + 1).state.x,
-           9 -> pmps((i * 4) + 1).state.w,  8 -> pmps((i * 4) + 1).state.r,
-           3 -> pmps((i * 4)    ).state.a,  2 -> pmps((i * 4)    ).state.x,
-           1 -> pmps((i * 4)    ).state.w,  0 -> pmps((i * 4)    ).state.r
+
+        // TODO: Do this in a functional-programmy way.
+        csrService.r(0x900 + i,
+          31 -> amps((i * 4) + 3).state.l,
+          30 -> amps((i * 4) + 3).state.d, 
+          29 -> amps((i * 4) + 3).state.m, 
+          27 -> amps((i * 4) + 3).state.a, 
+          26 -> amps((i * 4) + 3).state.x,
+          25 -> amps((i * 4) + 3).state.w, 
+          24 -> amps((i * 4) + 3).state.r,
+          23 -> amps((i * 4) + 2).state.l,
+          22 -> amps((i * 4) + 2).state.d,
+          21 -> amps((i * 4) + 2).state.m,
+          19 -> amps((i * 4) + 2).state.a, 
+          18 -> amps((i * 4) + 2).state.x,
+          17 -> amps((i * 4) + 2).state.w, 
+          16 -> amps((i * 4) + 2).state.r,
+          15 -> amps((i * 4) + 1).state.l,  
+          14 -> amps((i * 4) + 1).state.d,  
+          13 -> amps((i * 4) + 1).state.m,  
+          11 -> amps((i * 4) + 1).state.a, 
+          10 -> amps((i * 4) + 1).state.x,
+           9 -> amps((i * 4) + 1).state.w, 
+           8 -> amps((i * 4) + 1).state.r,
+           7 -> amps((i * 4)    ).state.l,
+           6 -> amps((i * 4)    ).state.d,
+           5 -> amps((i * 4)    ).state.m,
+           3 -> amps((i * 4)    ).state.a, 
+           2 -> amps((i * 4)    ).state.x,
+           1 -> amps((i * 4)    ).state.w, 
+           0 -> amps((i * 4)    ).state.r
         )
-        csrService.w(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).csr.l, 23 -> pmps((i * 4) + 2).csr.l,
-          15 -> pmps((i * 4) + 1).csr.l,  7 -> pmps((i * 4)    ).csr.l,
-          27 -> pmps((i * 4) + 3).csr.a, 26 -> pmps((i * 4) + 3).csr.x,
-          25 -> pmps((i * 4) + 3).csr.w, 24 -> pmps((i * 4) + 3).csr.r,
-          19 -> pmps((i * 4) + 2).csr.a, 18 -> pmps((i * 4) + 2).csr.x,
-          17 -> pmps((i * 4) + 2).csr.w, 16 -> pmps((i * 4) + 2).csr.r,
-          11 -> pmps((i * 4) + 1).csr.a, 10 -> pmps((i * 4) + 1).csr.x,
-           9 -> pmps((i * 4) + 1).csr.w,  8 -> pmps((i * 4) + 1).csr.r,
-           3 -> pmps((i * 4)    ).csr.a,  2 -> pmps((i * 4)    ).csr.x,
-           1 -> pmps((i * 4)    ).csr.w,  0 -> pmps((i * 4)    ).csr.r
-        )
-        csrService.rw(0x900 + i,
-          31 -> spmps((i * 4) + 3).csr.l, 23 -> spmps((i * 4) + 2).csr.l,
-          15 -> spmps((i * 4) + 1).csr.l,  7 -> spmps((i * 4)    ).csr.l,
-          27 -> spmps((i * 4) + 3).csr.a, 26 -> spmps((i * 4) + 3).csr.x,
-          25 -> spmps((i * 4) + 3).csr.w, 24 -> spmps((i * 4) + 3).csr.r,
-          19 -> spmps((i * 4) + 2).csr.a, 18 -> spmps((i * 4) + 2).csr.x,
-          17 -> spmps((i * 4) + 2).csr.w, 16 -> spmps((i * 4) + 2).csr.r,
-          11 -> spmps((i * 4) + 1).csr.a, 10 -> spmps((i * 4) + 1).csr.x,
-           9 -> spmps((i * 4) + 1).csr.w,  8 -> spmps((i * 4) + 1).csr.r,
-           3 -> spmps((i * 4)    ).csr.a,  2 -> spmps((i * 4)    ).csr.x,
-           1 -> spmps((i * 4)    ).csr.w,  0 -> spmps((i * 4)    ).csr.r
+        csrService.w(0x900 + i,
+          31 -> amps((i * 4) + 3).state.l,
+          30 -> amps((i * 4) + 3).state.d, 
+          29 -> amps((i * 4) + 3).state.m, 
+          27 -> amps((i * 4) + 3).state.a, 
+          26 -> amps((i * 4) + 3).state.x,
+          25 -> amps((i * 4) + 3).state.w, 
+          24 -> amps((i * 4) + 3).state.r,
+          23 -> amps((i * 4) + 2).state.l,
+          22 -> amps((i * 4) + 2).state.d,
+          21 -> amps((i * 4) + 2).state.m,
+          19 -> amps((i * 4) + 2).state.a, 
+          18 -> amps((i * 4) + 2).state.x,
+          17 -> amps((i * 4) + 2).state.w, 
+          16 -> amps((i * 4) + 2).state.r,
+          15 -> amps((i * 4) + 1).state.l,  
+          14 -> amps((i * 4) + 1).state.d,  
+          13 -> amps((i * 4) + 1).state.m,  
+          11 -> amps((i * 4) + 1).state.a, 
+          10 -> amps((i * 4) + 1).state.x,
+           9 -> amps((i * 4) + 1).state.w, 
+           8 -> amps((i * 4) + 1).state.r,
+           7 -> amps((i * 4)    ).state.l,
+           6 -> amps((i * 4)    ).state.d,
+           5 -> amps((i * 4)    ).state.m,
+           3 -> amps((i * 4)    ).state.a, 
+           2 -> amps((i * 4)    ).state.x,
+           1 -> amps((i * 4)    ).state.w, 
+           0 -> amps((i * 4)    ).state.r
         )
       }
 
-      // Connect memory ports to PMP logic.
+      // Connect memory ports to AMP logic.
       val ports = for ((port, portId) <- portsInfo.zipWithIndex) yield new Area {
 
         val address = port.bus.cmd.virtualAddress
         port.bus.rsp.physicalAddress := address
 
-        // Only the first matching PMP region applies.
-        val m = privilegeService.isMachine()
-        val mMatch = pmps.map(pmp => pmp.region.valid &
-                                     pmp.region.start <= address &
-                                     pmp.region.end > address &
-                                    (pmp.state.l | ~m))
+        val machineMode = privilegeService.isMachine()
+        val machineMatch = amps.map(amp => amp.region.valid &
+                                           amp.region.start <= address &
+                                           amp.region.end > address &
+                                          (amp.region.locked | ~machineMode))
 
-        val mR = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.r))
-        val mW = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.w))
-        val mX = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.x))
+        // TODO: _.state changes 1 cycle before _.region. This could lead to
+        // inconsistencies.
+        val machineRead = MuxOH(OHMasking.first(machineMatch), amps.map(_.state.r))
+        val machineWrite = MuxOH(OHMasking.first(machineMatch), amps.map(_.state.w))
+        val machineExecute = MuxOH(OHMasking.first(machineMatch), amps.map(_.state.x))
+        val machineModified = MuxOH(OHMasking.first(machineMatch), amps.map(_.state.m))
 
         // M-mode has full access by default, others have none.
-        when(CountOne(mMatch) === 0) {
+        when(CountOne(machineMatch) === 0) {
 
-          port.bus.rsp.allowRead := m
-          port.bus.rsp.allowWrite := m
-          port.bus.rsp.allowExecute := m
+          port.bus.rsp.allowRead := machineMode
+          port.bus.rsp.allowWrite := machineMode
+          port.bus.rsp.allowExecute := machineMode
           port.bus.rsp.isPaging := False
-        
+
         } otherwise {
 
-          val s = privilegeService.isSupervisor()
-          val u = privilegeService.isUser()
-          val sMatch = spmps.map(spmp => spmp.region.valid &
-                                         spmp.region.start <= address &
-                                         spmp.region.end > address &
-                                        (spmp.csr.l | ~s) & ~m)
+          val userMode = privilegeService.isUser()
+          val supervisorMatch = amps.map(amp => amp.region.valid &
+                                                amp.region.start <= address &
+                                                amp.region.end > address &
+                                               (amp.region.modified ^ userMode) &
+                                                ~machineMode)
 
-          val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
-          val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
-          val sX = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.x))
-          val sL = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.l))
+          val supervisorRead = MuxOH(OHMasking.first(supervisorMatch), amps.map(_.csr.r))
+          val supervisorWrite = MuxOH(OHMasking.first(supervisorMatch), amps.map(_.csr.w))
+          val supervisorExecute = MuxOH(OHMasking.first(supervisorMatch), amps.map(_.csr.x))
+          val supervisorModified = MuxOH(OHMasking.first(supervisorMatch), amps.map(_.csr.m))
 
-          when(CountOne(sMatch) === 0) {
+          when(CountOne(supervisorMatch) === 0) {
 
-            port.bus.rsp.allowRead := mR
-            port.bus.rsp.allowWrite := mW
-            port.bus.rsp.allowExecute := mX
+            port.bus.rsp.allowRead := machineRead
+            port.bus.rsp.allowWrite := machineWrite
+            port.bus.rsp.allowExecute := machineExecute
             port.bus.rsp.isPaging := False
 
           } otherwise {
             
-            port.bus.rsp.allowRead := mR & sR & (u ^ sL)
-            port.bus.rsp.allowWrite := mW & sW & (u ^ sL)
-            port.bus.rsp.allowExecute := mX & sX & (u ^ sL)
+            port.bus.rsp.allowRead := machineRead & supervisorRead & (userMode ^ supervisorModified)
+            port.bus.rsp.allowWrite := machineWrite & supervisorWrite & (userMode ^ supervisorModified)
+            port.bus.rsp.allowExecute := machineExecute & supervisorExecute & (userMode ^ supervisorModified)
             port.bus.rsp.isPaging := True
           
           }
