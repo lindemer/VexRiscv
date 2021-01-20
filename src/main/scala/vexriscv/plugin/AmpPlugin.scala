@@ -252,7 +252,6 @@ class AmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
           val supervisorMatch = amps.map(amp => amp.region.valid &
                                                 amp.region.start <= address &
                                                 amp.region.end > address &
-                                               (amp.region.modified ^ userMode) &
                                                 ~machineMode)
 
           val supervisorRead = MuxOH(OHMasking.first(supervisorMatch), amps.map(_.csr.r))

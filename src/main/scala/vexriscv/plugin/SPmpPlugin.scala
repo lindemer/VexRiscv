@@ -169,7 +169,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           val supervisorMatch = spmps.map(spmp => spmp.region.valid &
                                                   spmp.region.start <= address &
                                                   spmp.region.end > address &
-                                                 (spmp.region.locked ^ userMode) & 
+                                                 (spmp.region.locked | userMode) & 
                                                   ~machineMode)
 
           val supervisorRead = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.r))
