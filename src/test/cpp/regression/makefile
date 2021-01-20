@@ -18,6 +18,7 @@ MMU?=yes
 PMP?=no
 EPMP?=no
 SPMP?=no
+AMP?=no
 SEED?=no
 LRSC?=no
 AMO?=no
@@ -230,6 +231,10 @@ endif
 
 ifeq ($(SPMP),yes)
 	ADDCFLAGS += -CFLAGS -DSPMP
+endif
+
+ifeq ($(AMP),yes)
+	ADDCFLAGS += -CFLAGS -DAMP
 endif
 
 ifeq ($(MUL),yes)

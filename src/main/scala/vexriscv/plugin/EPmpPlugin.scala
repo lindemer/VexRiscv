@@ -99,9 +99,9 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
           } otherwise {
 
-            port.bus.rsp.allowRead := ((l ^ m) & r) | (l & m & w & x) | (~l & ~r & w)
-            port.bus.rsp.allowWrite := ((l ^ m) & w) | (~l & ~r & w & (x | m))
-            port.bus.rsp.allowExecute := ((l ^ m) & x) | (l & ~r & w)
+            port.bus.rsp.allowRead := ((l ^ ~m) & r) | (~l & ~r & w) | ((l & w & x) & (r | m))
+            port.bus.rsp.allowWrite := ((l ^ ~m) & w) | (~l & ~r & w & (x | m))
+            port.bus.rsp.allowExecute := ((l ^ ~m) & x) | (l & ~r & w)
 
           }
 

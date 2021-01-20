@@ -4,31 +4,32 @@
  * SPDX-License-Identifier: MIT
  */
 
-#define TEST_ID    x28
-#define TRAP_RA    x30
+#define TEST_ID   x28
+#define MEPC      x30
 
-#define PMPCFG0    0x07120000
-#define PMPCFG0_   0x07920808 // locked
-#define PMPCFG1    0x191f0304
-#define PMPCFG2    0x000f0506
-#define PMPCFG3    0x0f1e1900
+#define mseccfg   0x390
 
-#define PMPADDR0   0x20000000 // OFF
-#define PMPADDR1   0xffffffff // OFF
-#define PMPADDR2   0x20002000 // NA4    W
-#define PMPADDR3   0x20003fff // OFF   RWX
-#define PMPADDR4   0x20003fff // OFF     X
-#define PMPADDR5   0x20003fff // OFF   RW
-#define PMPADDR6   0x20001fff // NAPOT RWX
-#define PMPADDR7   0x20005fff // NAPOT R
-#define PMPADDR8   0x2000c000 // TOR    W
-#define PMPADDR9   0x2000d000 // TOR   R
-#define PMPADDR10  0xffffffff // TOR   RWX
-#define PMPADDR11  0x00000000 // OFF
-#define PMPADDR12  0x00000000 // OFF
-#define PMPADDR13  0x00000000 // NAPOT R
-#define PMPADDR14  0x00000000 // NAPOT  WX
-#define PMPADDR15  0x00000000 // TOR   RWX
+#define PMPCFG0   0x13121110
+#define PMPCFG1   0x17161514
+#define PMPCFG2   0x93929190
+#define PMPCFG3   0x97969594
+
+#define PMPADDR0  0x22000000 // NA4      0x88000000
+#define PMPADDR1  0x22000001 // NA4  R   0x88000004
+#define PMPADDR2  0x22000002 // NA4   W  0x88000008
+#define PMPADDR3  0x22000003 // NA4  RW  0x8800000c
+#define PMPADDR4  0x22000004 // NA4    X 0x88000010
+#define PMPADDR5  0x22000005 // NA4  R X 0x88000014
+#define PMPADDR6  0x22000006 // NA4   WX 0x88000018
+#define PMPADDR7  0x22000007 // NA4  RWX 0x8800001c
+#define PMPADDR8  0x22000008 // NA4 L    0x88000020
+#define PMPADDR9  0x22000009 // NA4 LR   0x88000024
+#define PMPADDR10 0x2200000a // NA4 L W  0x88000028
+#define PMPADDR11 0x2200000b // NA4 LRW  0x8800002c
+#define PMPADDR12 0x2200000c // NA4 L  X 0x88000030
+#define PMPADDR13 0x2200000d // NA4 LR X 0x88000034
+#define PMPADDR14 0x2200000e // NA4 L WX 0x88000038
+#define PMPADDR15 0x2200000f // NA4 LRWX 0x8800003c
 
 .global _start
 _start:
@@ -38,23 +39,12 @@ _start:
 
 .global trap
 trap:
-    csrw mepc, TRAP_RA
+    csrw mepc, MEPC
     mret
 
-// configure PMP, attempt read/write from machine mode
 test0:
     li TEST_ID, 0
-    la TRAP_RA, fail
-
-    li x1, 0x80000000
-    li x4, 0x80008000
-    li x2, 0xdeadbeef
-    sw x2, 0x0(x1)
-    sw x2, 0x0(x4)
-    lw x3, 0x0(x1)
-    bne x2, x3, fail
-    lw x3, 0x0(x4)
-    bne x2, x3, fail
+    la MEPC, fail
 
     li x5, PMPCFG0
     csrw pmpcfg0, x5
@@ -97,95 +87,98 @@ test0:
     li x5, PMPADDR15
     csrw pmpaddr15, x5
 
-    li x2, 0xc0ffee
-    sw x2, 0x0(x1)
-    sw x2, 0x0(x4)
-    lw x3, 0x0(x1)
-    bne x2, x3, fail
-    li x3, 0x0
-    lw x3, 0x0(x4)
-    bne x2, x3, fail
-
-// lock region 2, attempt read/write from machine mode
 test1:
     li TEST_ID, 1
-    la TRAP_RA, fail 
-    li x5, PMPCFG0_
-    csrw pmpcfg0, x5            // lock region 2
-    li x1, 0x80008000
-    li x2, 0xdeadbeef
-    sw x2, 0x0(x1)              // should be OK (write 0x80008000)
-    la TRAP_RA, test2
-    lw x3, 0x0(x1)              // should fault (read 0x80008000)
+    la MEPC, fail
+
+    j test2
+    li x6, 0x88000000
+
+    // legal machine read/write with MML=0
+    lw x7, 0x00(x6)
+    sw x7, 0x00(x6)
+    lw x7, 0x04(x6)
+    sw x7, 0x04(x6)
+    lw x7, 0x08(x6)
+    sw x7, 0x08(x6)
+    lw x7, 0x0c(x6)
+    sw x7, 0x0c(x6)
+    lw x7, 0x10(x6)
+    sw x7, 0x10(x6)
+    lw x7, 0x14(x6)
+    sw x7, 0x14(x6)
+    lw x7, 0x18(x6)
+    sw x7, 0x18(x6)
+    lw x7, 0x1c(x6)
+    sw x7, 0x1c(x6)
+    lw x7, 0x24(x6) // LR
+    lw x7, 0x2c(x6) // LRW
+    lw x7, 0x34(x6) // LR X
+    lw x7, 0x3c(x6) // LRWX
+    sw x7, 0x28(x6) // L W
+    sw x7, 0x2c(x6) // LRW
+    sw x7, 0x38(x6) // L WX
+    sw x7, 0x3c(x6) // LRWX
+
+    la MEPC, test2
+    lw x7, 0x20(x6)
     j fail
 
-// "unlock" region 2, attempt read/write from machine mode
 test2:
     li TEST_ID, 2
-    la TRAP_RA, fail 
-    li x5, PMPCFG0
-    csrw pmpcfg0, x5            // "unlock" region 2
-    li x1, 0x80008000
-    li x2, 0xdeadbeef
-    sw x2, 0x0(x1)              // should still be OK (write 0x80008000)
-    la TRAP_RA, test3
-    lw x3, 0x0(x1)              // should still fault (read 0x80008000)
+    la MEPC, fail
+
+    csrsi mseccfg, 0x1
+    li x6, 0x88000000
+    j pass
+
+    // legal machine read/write with MML=1
+    lw x7, 0x08(x6) //   W
+    lw x7, 0x18(x6) //   WX
+    sw x7, 0x08(x6) //   W
+    sw x7, 0x18(x6) //   WX
+    lw x7, 0x24(x6) // LR
+    lw x7, 0x2c(x6) // LRW
+    lw x7, 0x34(x6) // LR X
+    lw x7, 0x38(x6) // L WX
+    lw x7, 0x3c(x6) // LRWX
+    sw x7, 0x2c(x6) // LRW
+
+    la MEPC, test3
+    sw x7, 0x3c(x6) // LRWX
     j fail
 
-// jump into user mode
 test3:
     li TEST_ID, 3
-    la TRAP_RA, fail
-    la x2, test4
-    csrw mepc, x2
-    mret
+    la MEPC, test4
+    csrci mseccfg, 0x1
+    li x6, 0x80
+    csrc mstatus, x6
 
-// attempt to read/write region 2 from user mode
-test4:
-    li TEST_ID, 4
-    la TRAP_RA, fail 
-    li x2, 0xdeadbeef
-    li x1, 0x80008000
-    sw x2, 0x0(x1)              // should be OK (write 0x80008000)
-    la TRAP_RA, test5
-    lw x3, 0x0(x1)              // should fault (read 0x80008000)
+    // jump to U-mode
+    mret
     j fail
 
-// attempt to read/write other regions from user mode
+test4:
+    li TEST_ID, 4
+    la MEPC, fail
+    j pass
+
 test5:
     li TEST_ID, 5
-    li x2, 0xdeadbeef
-    li x1, 0x80000000
-    sw x2, 0x0(x1)
-    lw x3, 0x0(x1)
-    bne x2, x3, fail            // should be OK (read/write 0x80000000)
+    la MEPC, fail
+    j pass
 
 test6:
     li TEST_ID, 6
-    li x1, 0x80010000
-    lw x3, 0x0(x1)              // should be OK (read 0x80010000)
-    la TRAP_RA, pass
-    sw x3, 0x0(x1)              // should fault (write 0x80010000)
-    j fail
-    
+    la MEPC, fail
+    j pass
+
 test7:
     li TEST_ID, 7
-    la TRAP_RA, fail 
-    li x2, 0xdeadbeef
-    li x1, 0x8002fff8
-    sw x2, 0x0(x4)              // should be OK (write 0x8002fff8)
-    la TRAP_RA, test5
-    lw x3, 0x0(x4)              // should fault (read 0x8002fff8)
-    j fail
+    la MEPC, fail
+    j pass
 
-test8:
-    li TEST_ID, 8
-    li x1, 0x8003fff8
-    lw x3, 0x0(x1)              // should be OK (read 0x8003fff8)
-    la TRAP_RA, pass
-    sw x3, 0x0(x1)              // should fault (write 0x8003fff8)
-    j fail
-    
 fail:
     li x2, 0xf00fff24
     sw TEST_ID, 0(x2)

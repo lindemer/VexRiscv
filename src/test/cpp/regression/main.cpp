@@ -3882,6 +3882,10 @@ int main(int argc, char **argv, char **env) {
 			redo(REDO,WorkspaceRegression("spmp").loadHex(string(REGRESSION_PATH) + "../raw/spmp/build/spmp.hex")->bootAt(0x80000000u)->run(10e3););
 		#endif
 
+		#ifdef AMP
+			redo(REDO,WorkspaceRegression("amp").loadHex(string(REGRESSION_PATH) + "../raw/apmp/build/amp.hex")->bootAt(0x80000000u)->run(10e3););
+		#endif
+
 		#ifdef AMO
 			redo(REDO,WorkspaceRegression("amo").withRiscvRef()->loadHex(string(REGRESSION_PATH) + "../raw/amo/build/amo.hex")->bootAt(0x00000000u)->run(10e3););
 		#endif
