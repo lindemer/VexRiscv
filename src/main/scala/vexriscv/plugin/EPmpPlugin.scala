@@ -46,12 +46,25 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         } else {
           pmps += PmpRegister(pmps.last)
         }
-        csrService.rw(0x3b0 + i, pmps(i).csr.addr)
+        csrService.r(0x3b0 + i, pmps(i).state.addr)
+        csrService.w(0x3b0 + i, pmps(i).csr.addr)
       }
 
       // Instantiate pmpcfg0 ... pmpcfg# CSRs.
       for (i <- 0 until (regions / 4)) {
-        csrService.rw(0x3a0 + i,
+        csrService.r(0x3a0 + i,
+          31 -> pmps((i * 4) + 3).state.l, 23 -> pmps((i * 4) + 2).state.l,
+          15 -> pmps((i * 4) + 1).state.l,  7 -> pmps((i * 4)    ).state.l,
+          27 -> pmps((i * 4) + 3).state.a, 26 -> pmps((i * 4) + 3).state.x,
+          25 -> pmps((i * 4) + 3).state.w, 24 -> pmps((i * 4) + 3).state.r,
+          19 -> pmps((i * 4) + 2).state.a, 18 -> pmps((i * 4) + 2).state.x,
+          17 -> pmps((i * 4) + 2).state.w, 16 -> pmps((i * 4) + 2).state.r,
+          11 -> pmps((i * 4) + 1).state.a, 10 -> pmps((i * 4) + 1).state.x,
+           9 -> pmps((i * 4) + 1).state.w,  8 -> pmps((i * 4) + 1).state.r,
+           3 -> pmps((i * 4)    ).state.a,  2 -> pmps((i * 4)    ).state.x,
+           1 -> pmps((i * 4)    ).state.w,  0 -> pmps((i * 4)    ).state.r
+        )
+        csrService.w(0x3a0 + i,
           31 -> pmps((i * 4) + 3).csr.l, 23 -> pmps((i * 4) + 2).csr.l,
           15 -> pmps((i * 4) + 1).csr.l,  7 -> pmps((i * 4)    ).csr.l,
           27 -> pmps((i * 4) + 3).csr.a, 26 -> pmps((i * 4) + 3).csr.x,
@@ -76,7 +89,7 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         val hits = pmps.map(pmp => pmp.region.valid &
                                    pmp.region.start <= address &
                                    pmp.region.end > address &
-                                  (pmp.region.l | ~m | mseccfg.MML))
+                                  (pmp.state.l | ~m | mseccfg.MML))
 
         when(CountOne(hits) === 0) {
 
@@ -86,10 +99,10 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           
         } otherwise {
 
-          val r = MuxOH(OHMasking.first(hits), pmps.map(_.region.r))
-          val w = MuxOH(OHMasking.first(hits), pmps.map(_.region.w))
-          val x = MuxOH(OHMasking.first(hits), pmps.map(_.region.x))
-          val l = MuxOH(OHMasking.first(hits), pmps.map(_.region.l))
+          val r = MuxOH(OHMasking.first(hits), pmps.map(_.state.r))
+          val w = MuxOH(OHMasking.first(hits), pmps.map(_.state.w))
+          val x = MuxOH(OHMasking.first(hits), pmps.map(_.state.x))
+          val l = MuxOH(OHMasking.first(hits), pmps.map(_.state.l))
 
           when(~mseccfg.MML) {
 

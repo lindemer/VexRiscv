@@ -90,6 +90,7 @@ _start:
     csrw pmpaddr0, x6
     li x6, PMPADDR1
     csrw pmpaddr1, x6
+    j pass
 
     // jump into S-mode
     la x6, test0

@@ -18,7 +18,6 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
   def NA4 = 2
   def NAPOT = 3
 
-  // Software-accessible CSR interface
   val csr = new Area {
     val r, w, x = Reg(Bool)
     val l = Reg(Bool)
@@ -100,13 +99,26 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           pmps += PmpRegister(pmps.last)
           spmps += SPmpRegister(spmps.last)
         }
-        csrService.rw(0x3b0 + i, pmps(i).csr.addr)
+        csrService.r(0x3b0 + i, pmps(i).state.addr)
+        csrService.w(0x3b0 + i, pmps(i).csr.addr)
         csrService.rw(0x910 + i, spmps(i).csr.addr)
       }
 
       // Instantiate pmpcfg0 ... pmpcfg# CSRs.
       for (i <- 0 until (regions / 4)) {
-        csrService.rw(0x3a0 + i,
+        csrService.r(0x3a0 + i,
+          31 -> pmps((i * 4) + 3).state.l, 23 -> pmps((i * 4) + 2).state.l,
+          15 -> pmps((i * 4) + 1).state.l,  7 -> pmps((i * 4)    ).state.l,
+          27 -> pmps((i * 4) + 3).state.a, 26 -> pmps((i * 4) + 3).state.x,
+          25 -> pmps((i * 4) + 3).state.w, 24 -> pmps((i * 4) + 3).state.r,
+          19 -> pmps((i * 4) + 2).state.a, 18 -> pmps((i * 4) + 2).state.x,
+          17 -> pmps((i * 4) + 2).state.w, 16 -> pmps((i * 4) + 2).state.r,
+          11 -> pmps((i * 4) + 1).state.a, 10 -> pmps((i * 4) + 1).state.x,
+           9 -> pmps((i * 4) + 1).state.w,  8 -> pmps((i * 4) + 1).state.r,
+           3 -> pmps((i * 4)    ).state.a,  2 -> pmps((i * 4)    ).state.x,
+           1 -> pmps((i * 4)    ).state.w,  0 -> pmps((i * 4)    ).state.r
+        )
+        csrService.w(0x3a0 + i,
           31 -> pmps((i * 4) + 3).csr.l, 23 -> pmps((i * 4) + 2).csr.l,
           15 -> pmps((i * 4) + 1).csr.l,  7 -> pmps((i * 4)    ).csr.l,
           27 -> pmps((i * 4) + 3).csr.a, 26 -> pmps((i * 4) + 3).csr.x,
@@ -143,11 +155,11 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         val mMatch = pmps.map(pmp => pmp.region.valid &
                                      pmp.region.start <= address &
                                      pmp.region.end > address &
-                                    (pmp.region.l | ~m))
+                                    (pmp.state.l | ~m))
 
-        val mR = MuxOH(OHMasking.first(mMatch), pmps.map(_.region.r))
-        val mW = MuxOH(OHMasking.first(mMatch), pmps.map(_.region.w))
-        val mX = MuxOH(OHMasking.first(mMatch), pmps.map(_.region.x))
+        val mR = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.r))
+        val mW = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.w))
+        val mX = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.x))
 
         // M-mode has full access by default, others have none.
         when(CountOne(mMatch) === 0) {
