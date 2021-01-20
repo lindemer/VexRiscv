@@ -118,7 +118,7 @@ case class PmpRegister(previous : PmpRegister) extends Area {
   val mask = state.addr & ~(state.addr + 1)
   val masked = (state.addr & ~mask) |<< 2
 
-  // PMP chnages take effect two clock cycles after the initial CSR write (i.e.,
+  // PMP changes take effect two clock cycles after the initial CSR write (i.e.,
   // settings propagate from csr -> state -> region).
   region.locked := state.l
   region.valid := True

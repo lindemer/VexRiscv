@@ -89,7 +89,7 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         val hits = pmps.map(pmp => pmp.region.valid &
                                    pmp.region.start <= address &
                                    pmp.region.end > address &
-                                  (pmp.state.l | ~m | mseccfg.MML))
+                                  (pmp.region.locked | ~m | mseccfg.MML))
 
         when(CountOne(hits) === 0) {
 

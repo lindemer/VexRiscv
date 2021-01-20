@@ -26,42 +26,36 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
   }
 
   val region = new Area {
-    val valid = Bool
+    val valid, locked = Bool
     val start, end = UInt(32 bits)
   }
   
   val shifted = csr.addr |<< 2
+  val mask = csr.addr & ~(csr.addr + 1)
+  val masked = (csr.addr & ~mask) |<< 2
+
+  region.locked := csr.l
   region.valid := True
 
   switch(csr.a) {
-
     is(TOR) {
-      if (previous == null) {
-        region.start := 0
-      } else {
-        region.start := previous.region.end
-      }
+      if (previous == null) region.start := 0
+      else region.start := previous.region.end
       region.end := shifted
     }
-
     is(NA4) {
       region.start := shifted
       region.end := shifted + 4
     }
-
     is(NAPOT) {
-      val mask = csr.addr & ~(csr.addr + 1)
-      val masked = (csr.addr & ~mask) |<< 2
       region.start := masked
       region.end := masked + ((mask + 1) |<< 3)
     }
-
     default {
       region.start := 0
       region.end := shifted
       region.valid := False
     }
-
   }
 }
 
@@ -155,7 +149,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         val mMatch = pmps.map(pmp => pmp.region.valid &
                                      pmp.region.start <= address &
                                      pmp.region.end > address &
-                                    (pmp.state.l | ~m))
+                                    (pmp.region.locked | ~m))
 
         val mR = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.r))
         val mW = MuxOH(OHMasking.first(mMatch), pmps.map(_.state.w))
@@ -176,7 +170,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           val sMatch = spmps.map(spmp => spmp.region.valid &
                                          spmp.region.start <= address &
                                          spmp.region.end > address &
-                                        (spmp.csr.l | ~s) & ~m)
+                                        (spmp.region.locked | ~s) & ~m)
 
           val sR = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.r))
           val sW = MuxOH(OHMasking.first(sMatch), spmps.map(_.csr.w))
