@@ -66,7 +66,7 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
       for (port <- ports) yield new Area {
 
-        val address = port.bus.cmd.virtualAddress
+        val address = port.bus.cmd(0).virtualAddress
         port.bus.rsp.physicalAddress := address
 
         val m = privilegeService.isMachine()

@@ -11,7 +11,7 @@ import spinal.core._
 import spinal.lib._
 import scala.collection.mutable.ArrayBuffer
 
-case class AmpRegister(previous : AmpRegister, privilegeService : PrivilegeService)
+case class Amp(previous : Amp, privilegeService : PrivilegeService)
   extends Area {
 
   def OFF = 0
@@ -120,15 +120,17 @@ case class AmpRegister(previous : AmpRegister, privilegeService : PrivilegeServi
 
 class AmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
 
-  // Each pmpcfg# CSR configures four regions.
   assert((regions % 4) == 0)
-   
-  val amps = ArrayBuffer[AmpRegister]()
-  val portsInfo = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+  
+  def ampcfg0 = 0x900
+  def ampaddr0 = 0x910
+  
+  val amps = ArrayBuffer[Amp]()
+  val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
-    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus())
-    portsInfo += port
+    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
+    ports += port
     port.bus
   }
 
@@ -142,87 +144,35 @@ class AmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
 
     val core = pipeline plug new Area {
 
-      // Instantiate pmpaddr0 ... pmpaddr# CSRs.
-      for (i <- 0 until regions) {
-        if (i == 0) {
-          amps += AmpRegister(null, privilegeService)
-        } else {
-          amps += AmpRegister(amps.last, privilegeService)
-        }
-        csrService.r(0x910 + i, amps(i).state.addr)
-        csrService.w(0x910 + i, amps(i).csr.addr)
+      for (region <- 0 until regions) {
+        if (region == 0) amps += Amp(null, privilegeService)
+        else amps += Amp(amps.last, privilegeService)
+        csrService.r(ampaddr0 + region, amps(region).state.addr)
+        csrService.w(ampaddr0 + region, amps(region).csr.addr)
       }
 
-      // Instantiate pmpcfg0 ... pmpcfg# CSRs.
-      for (i <- 0 until (regions / 4)) {
-
-        // TODO: Do this in a functional-programmy way.
-        csrService.r(0x900 + i,
-          31 -> amps((i * 4) + 3).state.l,
-          30 -> amps((i * 4) + 3).state.d, 
-          29 -> amps((i * 4) + 3).state.m, 
-          27 -> amps((i * 4) + 3).state.a, 
-          26 -> amps((i * 4) + 3).state.x,
-          25 -> amps((i * 4) + 3).state.w, 
-          24 -> amps((i * 4) + 3).state.r,
-          23 -> amps((i * 4) + 2).state.l,
-          22 -> amps((i * 4) + 2).state.d,
-          21 -> amps((i * 4) + 2).state.m,
-          19 -> amps((i * 4) + 2).state.a, 
-          18 -> amps((i * 4) + 2).state.x,
-          17 -> amps((i * 4) + 2).state.w, 
-          16 -> amps((i * 4) + 2).state.r,
-          15 -> amps((i * 4) + 1).state.l,  
-          14 -> amps((i * 4) + 1).state.d,  
-          13 -> amps((i * 4) + 1).state.m,  
-          11 -> amps((i * 4) + 1).state.a, 
-          10 -> amps((i * 4) + 1).state.x,
-           9 -> amps((i * 4) + 1).state.w, 
-           8 -> amps((i * 4) + 1).state.r,
-           7 -> amps((i * 4)    ).state.l,
-           6 -> amps((i * 4)    ).state.d,
-           5 -> amps((i * 4)    ).state.m,
-           3 -> amps((i * 4)    ).state.a, 
-           2 -> amps((i * 4)    ).state.x,
-           1 -> amps((i * 4)    ).state.w, 
-           0 -> amps((i * 4)    ).state.r
-        )
-        csrService.w(0x900 + i,
-          31 -> amps((i * 4) + 3).state.l,
-          30 -> amps((i * 4) + 3).state.d, 
-          29 -> amps((i * 4) + 3).state.m, 
-          27 -> amps((i * 4) + 3).state.a, 
-          26 -> amps((i * 4) + 3).state.x,
-          25 -> amps((i * 4) + 3).state.w, 
-          24 -> amps((i * 4) + 3).state.r,
-          23 -> amps((i * 4) + 2).state.l,
-          22 -> amps((i * 4) + 2).state.d,
-          21 -> amps((i * 4) + 2).state.m,
-          19 -> amps((i * 4) + 2).state.a, 
-          18 -> amps((i * 4) + 2).state.x,
-          17 -> amps((i * 4) + 2).state.w, 
-          16 -> amps((i * 4) + 2).state.r,
-          15 -> amps((i * 4) + 1).state.l,  
-          14 -> amps((i * 4) + 1).state.d,  
-          13 -> amps((i * 4) + 1).state.m,  
-          11 -> amps((i * 4) + 1).state.a, 
-          10 -> amps((i * 4) + 1).state.x,
-           9 -> amps((i * 4) + 1).state.w, 
-           8 -> amps((i * 4) + 1).state.r,
-           7 -> amps((i * 4)    ).state.l,
-           6 -> amps((i * 4)    ).state.d,
-           5 -> amps((i * 4)    ).state.m,
-           3 -> amps((i * 4)    ).state.a, 
-           2 -> amps((i * 4)    ).state.x,
-           1 -> amps((i * 4)    ).state.w, 
-           0 -> amps((i * 4)    ).state.r
-        )
+      for (ampNcfg <- Range(0, regions, 4)) {
+        val cfgCsr = ampcfg0 + ampNcfg / 4
+        for (offset <- 0 until 4) {
+          csrService.r(cfgCsr, (offset * 8 + 0) -> amps(ampNcfg + offset).state.r)
+          csrService.r(cfgCsr, (offset * 8 + 1) -> amps(ampNcfg + offset).state.w)
+          csrService.r(cfgCsr, (offset * 8 + 2) -> amps(ampNcfg + offset).state.x)
+          csrService.r(cfgCsr, (offset * 8 + 3) -> amps(ampNcfg + offset).state.a)
+          csrService.r(cfgCsr, (offset * 8 + 6) -> amps(ampNcfg + offset).state.d)
+          csrService.r(cfgCsr, (offset * 8 + 7) -> amps(ampNcfg + offset).state.l)
+          csrService.w(cfgCsr, (offset * 8 + 0) -> amps(ampNcfg + offset).csr.r)
+          csrService.w(cfgCsr, (offset * 8 + 1) -> amps(ampNcfg + offset).csr.w)
+          csrService.w(cfgCsr, (offset * 8 + 2) -> amps(ampNcfg + offset).csr.x)
+          csrService.w(cfgCsr, (offset * 8 + 3) -> amps(ampNcfg + offset).csr.a)
+          csrService.r(cfgCsr, (offset * 8 + 6) -> amps(ampNcfg + offset).csr.d)
+          csrService.w(cfgCsr, (offset * 8 + 7) -> amps(ampNcfg + offset).csr.l)
+        }
       }
 
       // Connect memory ports to AMP logic.
-      val ports = for ((port, portId) <- portsInfo.zipWithIndex) yield new Area {
+      for (port <- ports) yield new Area {
 
-        val address = port.bus.cmd.virtualAddress
+        val address = port.bus.cmd(0).virtualAddress
         port.bus.rsp.physicalAddress := address
 
         val machineMode = privilegeService.isMachine()

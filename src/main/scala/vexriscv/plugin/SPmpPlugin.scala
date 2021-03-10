@@ -70,11 +70,11 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
   
   val pmps = ArrayBuffer[Pmp]()
   val spmps = ArrayBuffer[SPmp]()
-  val portsInfo = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+  val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
-    portsInfo += port
+    ports += port
     port.bus
   }
 
@@ -123,9 +123,9 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         }
       }
 
-      val ports = for ((port, portId) <- portsInfo.zipWithIndex) yield new Area {
+      for (port <- ports) yield new Area {
 
-        val address = port.bus.cmd.virtualAddress
+        val address = port.bus.cmd(0).virtualAddress
         port.bus.rsp.physicalAddress := address
 
         val machineMode = privilegeService.isMachine()

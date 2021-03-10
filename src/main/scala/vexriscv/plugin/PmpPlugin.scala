@@ -239,7 +239,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.allowRead := False
         port.bus.rsp.allowWrite := False
 
-        val hits = check(port.bus.cmd.virtualAddress)
+        val hits = check(port.bus.cmd(0).virtualAddress)
         when(CountOne(hits) === 0) {
           port.bus.rsp.allowExecute := privilegeService.isMachine()
         } otherwise {
