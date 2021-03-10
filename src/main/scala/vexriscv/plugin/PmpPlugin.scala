@@ -112,37 +112,15 @@ case class Pmp(previous : Pmp) extends Area {
       previous.state.l := True
     }
   }
-
-  val shifted = state.addr |<< 2
-  val mask = state.addr & ~(state.addr + 1)
-  val napotStart = (state.addr & ~mask) |<< 2
-  val napotEnd = napotStart + ((mask + 1) |<< 3)
-
-  // PMP changes take effect two clock cycles after the initial CSR write (i.e.,
-  // settings propagate from csr -> state -> region).
+  
   region.locked := state.l
-  region.valid := True
-
-  switch(state.a) {
-    is(TOR) {
-      if (previous == null) region.start := 0
-      else region.start := previous.region.end
-      region.end := shifted
-    }
-    is(NA4) {
-      region.start := shifted
-      region.end := shifted + 4
-    }
-    is(NAPOT) {
-      region.start := napotStart
-      region.end := napotEnd
-    }
-    default {
-      region.start := 0
-      region.end := shifted
-      region.valid := False
-    }
-  }
+  region.valid := state.a.mux(
+    OFF -> False,
+    default -> True
+  )
+  if (previous == null) region.start := 0
+  else region.start := previous.region.end
+  region.end := state.addr |<< 2
 }
 
 case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
