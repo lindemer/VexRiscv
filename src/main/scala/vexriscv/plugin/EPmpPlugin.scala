@@ -22,7 +22,7 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
   val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
-    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus())
+    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
     ports += port
     port.bus
   }

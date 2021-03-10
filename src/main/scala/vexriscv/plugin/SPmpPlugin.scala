@@ -73,7 +73,7 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
   val portsInfo = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
-    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus())
+    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
     portsInfo += port
     port.bus
   }
