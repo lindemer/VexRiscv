@@ -96,7 +96,7 @@ case class Amp(previous : Amp, privilegeService : PrivilegeService)
   region.modified := state.m
   region.valid := True
 
-  switch(csr.a) {
+  switch(state.a) {
     is(TOR) {
       if (previous == null) region.start := 0
       else region.start := previous.region.end
