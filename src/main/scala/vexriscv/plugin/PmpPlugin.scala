@@ -64,7 +64,7 @@ import scala.collection.mutable.ArrayBuffer
  * register defines a 4-byte wide region.
  */
 
-case class Pmp(previous : Pmp) extends Area {
+case class Pmp() extends Area {
 
   def OFF = 0
   def TOR = 1
@@ -107,42 +107,17 @@ case class Pmp(previous : Pmp) extends Area {
     state.l    := csr.l
     state.a    := csr.a
     state.addr := csr.addr
-
-    if (csr.l == True & csr.a == TOR) {
-      previous.state.l := True
-    }
   }
 
-  val shifted = state.addr |<< 2
   val mask = state.addr & ~(state.addr + 1)
-  val napotStart = (state.addr & ~mask) |<< 2
-  val napotEnd = napotStart + ((mask + 1) |<< 3)
-
-  // PMP changes take effect two clock cycles after the initial CSR write (i.e.,
-  // settings propagate from csr -> state -> region).
+  val masked = (state.addr & ~mask) |<< 2
+  region.start := masked
+  region.end := masked + ((mask + 1) |<< 3)
   region.locked := state.l
-  region.valid := True
-
-  switch(csr.a) {
-    is(TOR) {
-      if (previous == null) region.start := 0
-      else region.start := previous.region.end
-      region.end := shifted
-    }
-    is(NA4) {
-      region.start := shifted
-      region.end := shifted + 4
-    }
-    is(NAPOT) {
-      region.start := napotStart
-      region.end := napotEnd
-    }
-    default {
-      region.start := 0
-      region.end := shifted
-      region.valid := False
-    }
-  }
+  region.valid := state.a.mux(
+    OFF -> False,
+    default -> True
+  )
 }
 
 case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
@@ -180,8 +155,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
 
       // Instantiate pmpaddr0 ... pmpaddr# CSRs.
       for (region <- 0 until regions) {
-        if (region == 0) pmps += Pmp(null)
-        else pmps += Pmp(pmps.last)
+        pmps += Pmp()
         csrService.r(pmpaddr0 + region, pmps(region).state.addr)
         csrService.w(pmpaddr0 + region, pmps(region).csr.addr)
       }
