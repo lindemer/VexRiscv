@@ -11,7 +11,7 @@ import spinal.core._
 import spinal.lib._
 import scala.collection.mutable.ArrayBuffer
 
-case class SPmpRegister(previous : SPmpRegister) extends Area {
+case class SPmp(previous : SPmp) extends Area {
 
   def OFF = 0
   def TOR = 1
@@ -61,11 +61,15 @@ case class SPmpRegister(previous : SPmpRegister) extends Area {
 
 class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
 
-  // Each pmpcfg# CSR configures four regions.
   assert((regions % 4) == 0)
-   
-  val pmps = ArrayBuffer[PmpRegister]()
-  val spmps = ArrayBuffer[SPmpRegister]()
+     
+  def pmpcfg0 = 0x3a0
+  def pmpaddr0 = 0x3b0
+  def spmpcfg0 = 0x900
+  def spmpaddr0 = 0x910
+  
+  val pmps = ArrayBuffer[Pmp]()
+  val spmps = ArrayBuffer[SPmp]()
   val portsInfo = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
@@ -84,79 +88,58 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
     val core = pipeline plug new Area {
 
-      // Instantiate pmpaddr0 ... pmpaddr# CSRs.
-      for (i <- 0 until regions) {
-        if (i == 0) {
-          pmps += PmpRegister(null)
-          spmps += SPmpRegister(null)
+      for (region <- 0 until regions) {
+        if (region == 0) {
+          pmps += Pmp(null)
+          spmps += SPmp(null)
         } else {
-          pmps += PmpRegister(pmps.last)
-          spmps += SPmpRegister(spmps.last)
+          pmps += Pmp(pmps.last)
+          spmps += SPmp(spmps.last)
         }
-        csrService.r(0x3b0 + i, pmps(i).state.addr)
-        csrService.w(0x3b0 + i, pmps(i).csr.addr)
-        csrService.rw(0x910 + i, spmps(i).csr.addr)
+        csrService.r(pmpaddr0 + region, pmps(region).state.addr)
+        csrService.w(pmpaddr0 + region, pmps(region).csr.addr)
+        csrService.rw(spmpaddr0 + region, spmps(region).csr.addr)
       }
 
-      // Instantiate pmpcfg0 ... pmpcfg# CSRs.
-      for (i <- 0 until (regions / 4)) {
-        csrService.r(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).state.l, 23 -> pmps((i * 4) + 2).state.l,
-          15 -> pmps((i * 4) + 1).state.l,  7 -> pmps((i * 4)    ).state.l,
-          27 -> pmps((i * 4) + 3).state.a, 26 -> pmps((i * 4) + 3).state.x,
-          25 -> pmps((i * 4) + 3).state.w, 24 -> pmps((i * 4) + 3).state.r,
-          19 -> pmps((i * 4) + 2).state.a, 18 -> pmps((i * 4) + 2).state.x,
-          17 -> pmps((i * 4) + 2).state.w, 16 -> pmps((i * 4) + 2).state.r,
-          11 -> pmps((i * 4) + 1).state.a, 10 -> pmps((i * 4) + 1).state.x,
-           9 -> pmps((i * 4) + 1).state.w,  8 -> pmps((i * 4) + 1).state.r,
-           3 -> pmps((i * 4)    ).state.a,  2 -> pmps((i * 4)    ).state.x,
-           1 -> pmps((i * 4)    ).state.w,  0 -> pmps((i * 4)    ).state.r
-        )
-        csrService.w(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).csr.l, 23 -> pmps((i * 4) + 2).csr.l,
-          15 -> pmps((i * 4) + 1).csr.l,  7 -> pmps((i * 4)    ).csr.l,
-          27 -> pmps((i * 4) + 3).csr.a, 26 -> pmps((i * 4) + 3).csr.x,
-          25 -> pmps((i * 4) + 3).csr.w, 24 -> pmps((i * 4) + 3).csr.r,
-          19 -> pmps((i * 4) + 2).csr.a, 18 -> pmps((i * 4) + 2).csr.x,
-          17 -> pmps((i * 4) + 2).csr.w, 16 -> pmps((i * 4) + 2).csr.r,
-          11 -> pmps((i * 4) + 1).csr.a, 10 -> pmps((i * 4) + 1).csr.x,
-           9 -> pmps((i * 4) + 1).csr.w,  8 -> pmps((i * 4) + 1).csr.r,
-           3 -> pmps((i * 4)    ).csr.a,  2 -> pmps((i * 4)    ).csr.x,
-           1 -> pmps((i * 4)    ).csr.w,  0 -> pmps((i * 4)    ).csr.r
-        )
-        csrService.rw(0x900 + i,
-          31 -> spmps((i * 4) + 3).csr.l, 23 -> spmps((i * 4) + 2).csr.l,
-          15 -> spmps((i * 4) + 1).csr.l,  7 -> spmps((i * 4)    ).csr.l,
-          27 -> spmps((i * 4) + 3).csr.a, 26 -> spmps((i * 4) + 3).csr.x,
-          25 -> spmps((i * 4) + 3).csr.w, 24 -> spmps((i * 4) + 3).csr.r,
-          19 -> spmps((i * 4) + 2).csr.a, 18 -> spmps((i * 4) + 2).csr.x,
-          17 -> spmps((i * 4) + 2).csr.w, 16 -> spmps((i * 4) + 2).csr.r,
-          11 -> spmps((i * 4) + 1).csr.a, 10 -> spmps((i * 4) + 1).csr.x,
-           9 -> spmps((i * 4) + 1).csr.w,  8 -> spmps((i * 4) + 1).csr.r,
-           3 -> spmps((i * 4)    ).csr.a,  2 -> spmps((i * 4)    ).csr.x,
-           1 -> spmps((i * 4)    ).csr.w,  0 -> spmps((i * 4)    ).csr.r
-        )
+      for (pmpNcfg <- Range(0, regions, 4)) {
+        val pmpCsr = pmpcfg0 + pmpNcfg / 4
+        val sPmpCsr = spmpcfg0 + pmpNcfg / 4
+        for (offset <- 0 until 4) {
+          csrService.r(pmpCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).state.r)
+          csrService.r(pmpCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).state.w)
+          csrService.r(pmpCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).state.x)
+          csrService.r(pmpCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).state.a)
+          csrService.r(pmpCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).state.l)
+          csrService.w(pmpCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).csr.r)
+          csrService.w(pmpCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).csr.w)
+          csrService.w(pmpCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).csr.x)
+          csrService.w(pmpCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).csr.a)
+          csrService.w(pmpCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).csr.l)
+          csrService.rw(sPmpCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).csr.r)
+          csrService.rw(sPmpCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).csr.w)
+          csrService.rw(sPmpCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).csr.x)
+          csrService.rw(sPmpCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).csr.a)
+          csrService.rw(sPmpCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).csr.l)
+        }
       }
 
-      // Connect memory ports to PMP logic.
       val ports = for ((port, portId) <- portsInfo.zipWithIndex) yield new Area {
 
         val address = port.bus.cmd.virtualAddress
         port.bus.rsp.physicalAddress := address
 
-        // Only the first matching PMP region applies.
         val machineMode = privilegeService.isMachine()
-        val machineMatch = pmps.map(pmp => pmp.region.valid &
+        val machineHits = pmps.map(pmp => pmp.region.valid &
                                            pmp.region.start <= address &
                                            pmp.region.end > address &
                                           (pmp.region.locked | ~machineMode))
 
-        val machineRead = MuxOH(OHMasking.first(machineMatch), pmps.map(_.state.r))
-        val machineWrite = MuxOH(OHMasking.first(machineMatch), pmps.map(_.state.w))
-        val machineExecute = MuxOH(OHMasking.first(machineMatch), pmps.map(_.state.x))
+        val machineHit0 = OHMasking.first(machineHits)
+        val machineRead = MuxOH(machineHit0, pmps.map(_.state.r))
+        val machineWrite = MuxOH(machineHit0, pmps.map(_.state.w))
+        val machineExecute = MuxOH(machineHit0, pmps.map(_.state.x))
 
-        // machineMode-mode has full access by default, others have none.
-        when(CountOne(machineMatch) === 0) {
+        when(CountOne(machineHits) === 0) {
 
           port.bus.rsp.allowRead := machineMode
           port.bus.rsp.allowWrite := machineMode
@@ -166,18 +149,19 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
         } otherwise {
 
           val userMode = privilegeService.isUser()
-          val supervisorMatch = spmps.map(spmp => spmp.region.valid &
+          val supervisorHits = spmps.map(spmp => spmp.region.valid &
                                                   spmp.region.start <= address &
                                                   spmp.region.end > address &
                                                  (spmp.region.locked | userMode) & 
                                                   ~machineMode)
 
-          val supervisorRead = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.r))
-          val supervisorWrite = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.w))
-          val supervisorExecute = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.x))
-          val supervisorLocked = MuxOH(OHMasking.first(supervisorMatch), spmps.map(_.csr.l))
+          val supervisorHit0 = OHMasking.first(supervisorHits)
+          val supervisorRead = MuxOH(supervisorHit0, spmps.map(_.csr.r))
+          val supervisorWrite = MuxOH(supervisorHit0, spmps.map(_.csr.w))
+          val supervisorExecute = MuxOH(supervisorHit0, spmps.map(_.csr.x))
+          val supervisorLocked = MuxOH(supervisorHit0, spmps.map(_.csr.l))
 
-          when(CountOne(supervisorMatch) === 0) {
+          when(CountOne(supervisorHits) === 0) {
 
             port.bus.rsp.allowRead := machineRead
             port.bus.rsp.allowWrite := machineWrite

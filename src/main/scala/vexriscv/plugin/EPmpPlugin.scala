@@ -13,15 +13,17 @@ import scala.collection.mutable.ArrayBuffer
 
 class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
 
-  // Each pmpcfg# CSR configures four regions.
   assert((regions % 4) == 0)
-   
-  val pmps = ArrayBuffer[PmpRegister]()
-  val portsInfo = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+     
+  def pmpcfg0 = 0x3a0
+  def pmpaddr0 = 0x3b0
+  
+  val pmps = ArrayBuffer[Pmp]()
+  val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus())
-    portsInfo += port
+    ports += port
     port.bus
   }
 
@@ -39,52 +41,34 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
       val mseccfg = new Area { val MML, MMWP, RLB = RegInit(False) }
       csrService.rw(0x390, 0 -> mseccfg.MML, 1 -> mseccfg.MMWP, 2 -> mseccfg.RLB)
 
-      // Instantiate pmpaddr0 ... pmpaddr# CSRs.
-      for (i <- 0 until regions) {
-        if (i == 0) {
-          pmps += PmpRegister(null)
-        } else {
-          pmps += PmpRegister(pmps.last)
+      for (region <- 0 until regions) {
+        if (region == 0) pmps += Pmp(null)
+        else pmps += Pmp(pmps.last)
+        csrService.r(pmpaddr0 + region, pmps(region).state.addr)
+        csrService.w(pmpaddr0 + region, pmps(region).csr.addr)
+      }
+
+      for (pmpNcfg <- Range(0, regions, 4)) {
+        val cfgCsr = pmpcfg0 + pmpNcfg / 4
+        for (offset <- 0 until 4) {
+          csrService.r(cfgCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).state.r)
+          csrService.r(cfgCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).state.w)
+          csrService.r(cfgCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).state.x)
+          csrService.r(cfgCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).state.a)
+          csrService.r(cfgCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).state.l)
+          csrService.w(cfgCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).csr.r)
+          csrService.w(cfgCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).csr.w)
+          csrService.w(cfgCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).csr.x)
+          csrService.w(cfgCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).csr.a)
+          csrService.w(cfgCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).csr.l)
         }
-        csrService.r(0x3b0 + i, pmps(i).state.addr)
-        csrService.w(0x3b0 + i, pmps(i).csr.addr)
       }
 
-      // Instantiate pmpcfg0 ... pmpcfg# CSRs.
-      for (i <- 0 until (regions / 4)) {
-        csrService.r(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).state.l, 23 -> pmps((i * 4) + 2).state.l,
-          15 -> pmps((i * 4) + 1).state.l,  7 -> pmps((i * 4)    ).state.l,
-          27 -> pmps((i * 4) + 3).state.a, 26 -> pmps((i * 4) + 3).state.x,
-          25 -> pmps((i * 4) + 3).state.w, 24 -> pmps((i * 4) + 3).state.r,
-          19 -> pmps((i * 4) + 2).state.a, 18 -> pmps((i * 4) + 2).state.x,
-          17 -> pmps((i * 4) + 2).state.w, 16 -> pmps((i * 4) + 2).state.r,
-          11 -> pmps((i * 4) + 1).state.a, 10 -> pmps((i * 4) + 1).state.x,
-           9 -> pmps((i * 4) + 1).state.w,  8 -> pmps((i * 4) + 1).state.r,
-           3 -> pmps((i * 4)    ).state.a,  2 -> pmps((i * 4)    ).state.x,
-           1 -> pmps((i * 4)    ).state.w,  0 -> pmps((i * 4)    ).state.r
-        )
-        csrService.w(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).csr.l, 23 -> pmps((i * 4) + 2).csr.l,
-          15 -> pmps((i * 4) + 1).csr.l,  7 -> pmps((i * 4)    ).csr.l,
-          27 -> pmps((i * 4) + 3).csr.a, 26 -> pmps((i * 4) + 3).csr.x,
-          25 -> pmps((i * 4) + 3).csr.w, 24 -> pmps((i * 4) + 3).csr.r,
-          19 -> pmps((i * 4) + 2).csr.a, 18 -> pmps((i * 4) + 2).csr.x,
-          17 -> pmps((i * 4) + 2).csr.w, 16 -> pmps((i * 4) + 2).csr.r,
-          11 -> pmps((i * 4) + 1).csr.a, 10 -> pmps((i * 4) + 1).csr.x,
-           9 -> pmps((i * 4) + 1).csr.w,  8 -> pmps((i * 4) + 1).csr.r,
-           3 -> pmps((i * 4)    ).csr.a,  2 -> pmps((i * 4)    ).csr.x,
-           1 -> pmps((i * 4)    ).csr.w,  0 -> pmps((i * 4)    ).csr.r
-        )
-      }
-
-      // Connect memory ports to PMP logic.
-      val ports = for ((port, portId) <- portsInfo.zipWithIndex) yield new Area {
+      for (port <- ports) yield new Area {
 
         val address = port.bus.cmd.virtualAddress
         port.bus.rsp.physicalAddress := address
 
-        // Only the first matching PMP region applies.
         val m = privilegeService.isMachine()
         val hits = pmps.map(pmp => pmp.region.valid &
                                    pmp.region.start <= address &
@@ -99,10 +83,11 @@ class EPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           
         } otherwise {
 
-          val r = MuxOH(OHMasking.first(hits), pmps.map(_.state.r))
-          val w = MuxOH(OHMasking.first(hits), pmps.map(_.state.w))
-          val x = MuxOH(OHMasking.first(hits), pmps.map(_.state.x))
-          val l = MuxOH(OHMasking.first(hits), pmps.map(_.state.l))
+          val firstHit = OHMasking.first(hits)
+          val r = MuxOH(firstHit, pmps.map(_.state.r))
+          val w = MuxOH(firstHit, pmps.map(_.state.w))
+          val x = MuxOH(firstHit, pmps.map(_.state.x))
+          val l = MuxOH(firstHit, pmps.map(_.state.l))
 
           when(~mseccfg.MML) {
 

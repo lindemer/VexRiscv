@@ -160,7 +160,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
   val iPorts = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
-    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
+    val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus())
     priority match {
       case MemoryTranslatorPort.PRIORITY_DATA => dPorts += port
       case MemoryTranslatorPort.PRIORITY_INSTRUCTION => iPorts += port
@@ -211,7 +211,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       }
 
       for (port <- (dPorts ++ iPorts)) yield new Area {
-        port.bus.rsp.physicalAddress := port.bus.cmd(0).virtualAddress
+        port.bus.rsp.physicalAddress := port.bus.cmd.virtualAddress
         port.bus.rsp.isIoAccess := ioRange(port.bus.rsp.physicalAddress)
         port.bus.rsp.isPaging := False
         port.bus.rsp.exception := False
@@ -223,7 +223,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       for (port <- dPorts) yield new Area {
         port.bus.rsp.allowExecute := False
 
-        val hits = check(port.bus.cmd(0).virtualAddress)
+        val hits = check(port.bus.cmd.virtualAddress)
         when(CountOne(hits) === 0) {
           port.bus.rsp.allowRead := privilegeService.isMachine()
           port.bus.rsp.allowWrite := privilegeService.isMachine()
@@ -239,7 +239,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.allowRead := False
         port.bus.rsp.allowWrite := False
 
-        val hits = check(port.bus.cmd(0).virtualAddress)
+        val hits = check(port.bus.cmd.virtualAddress)
         when(CountOne(hits) === 0) {
           port.bus.rsp.allowExecute := privilegeService.isMachine()
         } otherwise {
