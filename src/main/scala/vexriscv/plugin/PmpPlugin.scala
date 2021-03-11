@@ -123,7 +123,7 @@ case class Pmp(previous : Pmp) extends Area {
   region.locked := state.l
   region.valid := True
 
-  switch(state.a) {
+  switch(csr.a) {
     is(TOR) {
       if (previous == null) region.start := 0
       else region.start := previous.region.end
