@@ -40,7 +40,8 @@ object sGenSecure extends App {
           )
         ),
         new SPmpPlugin(
-          regions = 16,
+          mRegions = 16,
+          sRegions = 16,
           ioRange = _(31 downto 28) === 0xf
         ),
         new DecoderSimplePlugin(

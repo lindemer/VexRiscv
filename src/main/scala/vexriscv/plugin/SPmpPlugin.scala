@@ -32,7 +32,8 @@ case class SPmp(previous : SPmp) extends Area {
   
   val shifted = csr.addr |<< 2
   val mask = csr.addr & ~(csr.addr + 1)
-  val masked = (csr.addr & ~mask) |<< 2
+  val napotStart = (csr.addr ^ mask) |<< 2
+  val napotEnd = napotStart + ((mask + 1) |<< 3)
 
   region.locked := csr.l
   region.valid := True
@@ -48,8 +49,8 @@ case class SPmp(previous : SPmp) extends Area {
       region.end := shifted + 4
     }
     is(NAPOT) {
-      region.start := masked
-      region.end := masked + ((mask + 1) |<< 3)
+      region.start := napotStart
+      region.end := napotEnd
     }
     default {
       region.start := 0
@@ -59,9 +60,10 @@ case class SPmp(previous : SPmp) extends Area {
   }
 }
 
-class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
+class SPmpPlugin(mRegions : Int, sRegions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
 
-  assert((regions % 4) == 0)
+  assert((mRegions % 4) == 0)
+  assert((sRegions % 4) == 0)
      
   def pmpcfg0 = 0x3a0
   def pmpaddr0 = 0x3b0
@@ -88,22 +90,21 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
     val core = pipeline plug new Area {
 
-      for (region <- 0 until regions) {
-        if (region == 0) {
-          pmps += Pmp(null)
-          spmps += SPmp(null)
-        } else {
-          pmps += Pmp(pmps.last)
-          spmps += SPmp(spmps.last)
-        }
+      for (region <- 0 until mRegions) {
+        if (region == 0) pmps += Pmp(null)
+        else pmps += Pmp(pmps.last)
         csrService.r(pmpaddr0 + region, pmps(region).state.addr)
         csrService.w(pmpaddr0 + region, pmps(region).csr.addr)
+      }
+
+      for (region <- 0 until sRegions) {
+        if (region == 0) spmps += SPmp(null)
+        else spmps += SPmp(spmps.last)
         csrService.rw(spmpaddr0 + region, spmps(region).csr.addr)
       }
 
-      for (pmpNcfg <- Range(0, regions, 4)) {
+      for (pmpNcfg <- Range(0, mRegions, 4)) {
         val pmpCsr = pmpcfg0 + pmpNcfg / 4
-        val sPmpCsr = spmpcfg0 + pmpNcfg / 4
         for (offset <- 0 until 4) {
           csrService.r(pmpCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).state.r)
           csrService.r(pmpCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).state.w)
@@ -115,11 +116,17 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
           csrService.w(pmpCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).csr.x)
           csrService.w(pmpCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).csr.a)
           csrService.w(pmpCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).csr.l)
-          csrService.rw(sPmpCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).csr.r)
-          csrService.rw(sPmpCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).csr.w)
-          csrService.rw(sPmpCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).csr.x)
-          csrService.rw(sPmpCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).csr.a)
-          csrService.rw(sPmpCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).csr.l)
+        }
+      }
+
+      for (spmpNcfg <- Range(0, sRegions, 4)) {
+        val sPmpCsr = spmpcfg0 + spmpNcfg / 4
+        for (offset <- 0 until 4) {
+          csrService.rw(sPmpCsr, (offset * 8 + 0) -> spmps(spmpNcfg + offset).csr.r)
+          csrService.rw(sPmpCsr, (offset * 8 + 1) -> spmps(spmpNcfg + offset).csr.w)
+          csrService.rw(sPmpCsr, (offset * 8 + 2) -> spmps(spmpNcfg + offset).csr.x)
+          csrService.rw(sPmpCsr, (offset * 8 + 3) -> spmps(spmpNcfg + offset).csr.a)
+          csrService.rw(sPmpCsr, (offset * 8 + 7) -> spmps(spmpNcfg + offset).csr.l)
         }
       }
 
@@ -130,9 +137,9 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
         val machineMode = privilegeService.isMachine()
         val machineHits = pmps.map(pmp => pmp.region.valid &
-                                           pmp.region.start <= address &
-                                           pmp.region.end > address &
-                                          (pmp.region.locked | ~machineMode))
+                                          pmp.region.start <= address &
+                                          pmp.region.end > address &
+                                         (pmp.region.locked | ~machineMode))
 
         val machineHit0 = OHMasking.first(machineHits)
         val machineRead = MuxOH(machineHit0, pmps.map(_.state.r))
@@ -150,10 +157,10 @@ class SPmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv]
 
           val userMode = privilegeService.isUser()
           val supervisorHits = spmps.map(spmp => spmp.region.valid &
-                                                  spmp.region.start <= address &
-                                                  spmp.region.end > address &
-                                                 (spmp.region.locked | userMode) & 
-                                                  ~machineMode)
+                                                 spmp.region.start <= address &
+                                                 spmp.region.end > address &
+                                                (spmp.region.locked | userMode) & 
+                                                ~machineMode)
 
           val supervisorHit0 = OHMasking.first(supervisorHits)
           val supervisorRead = MuxOH(supervisorHit0, spmps.map(_.csr.r))

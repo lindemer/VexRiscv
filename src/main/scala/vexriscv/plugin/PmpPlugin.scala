@@ -115,7 +115,7 @@ case class Pmp(previous : Pmp) extends Area {
 
   val shifted = state.addr |<< 2
   val mask = state.addr & ~(state.addr + 1)
-  val napotStart = (state.addr & ~mask) |<< 2
+  val napotStart = (state.addr ^ mask) |<< 2
   val napotEnd = napotStart + ((mask + 1) |<< 3)
 
   // PMP changes take effect two clock cycles after the initial CSR write (i.e.,
@@ -234,7 +234,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         }
       }
 
-      // Only PMP X rules apply to instruciton ports. R/W are not allowed.
+      // Only PMP X rules apply to instruction ports. R/W are not allowed.
       for (port <- iPorts) yield new Area {
         port.bus.rsp.allowRead := False
         port.bus.rsp.allowWrite := False

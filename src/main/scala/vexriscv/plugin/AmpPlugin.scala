@@ -87,7 +87,8 @@ case class Amp(previous : Amp, privilegeService : PrivilegeService)
 
   val shifted = state.addr |<< 2
   val mask = state.addr & ~(state.addr + 1)
-  val masked = (state.addr & ~mask) |<< 2
+  val napotStart = (state.addr ^ mask) |<< 2
+  val napotEnd = napotStart + ((mask + 1) |<< 3)
 
   // AMP changes take effect two clock cycles after the initial CSR write (i.e.,
   // settings propagate from csr -> state -> region).
@@ -107,8 +108,8 @@ case class Amp(previous : Amp, privilegeService : PrivilegeService)
       region.end := shifted + 4
     }
     is(NAPOT) {
-      region.start := masked
-      region.end := masked + ((mask + 1) |<< 3)
+      region.start := napotStart
+      region.end := napotEnd
     }
     default {
       region.start := 0

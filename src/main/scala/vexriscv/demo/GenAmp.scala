@@ -39,7 +39,7 @@ object GenAmp extends App {
             catchUnaligned   = true
           )
         ),
-        new SPmpPlugin(
+        new AmpPlugin(
           regions = 16,
           ioRange = _(31 downto 28) === 0xf
         ),
