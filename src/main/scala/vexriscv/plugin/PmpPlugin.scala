@@ -96,8 +96,8 @@ case class Pmp(previous : Pmp) extends Area {
 
   // Computed PMP region bounds
   val region = new Area {
-    val valid, locked = Bool
-    val start, end = UInt(32 bits)
+    val valid, locked = RegInit(False)
+    val start, end = Reg(UInt(32 bits)) init(0)
   }
 
   when(~state.l) {
@@ -224,7 +224,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.allowExecute := False
 
         val hits = check(port.bus.cmd(0).virtualAddress)
-        when(CountOne(hits) === 0) {
+        when(~hits.orR) {
           port.bus.rsp.allowRead := privilegeService.isMachine()
           port.bus.rsp.allowWrite := privilegeService.isMachine()
         } otherwise {
@@ -240,7 +240,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.allowWrite := False
 
         val hits = check(port.bus.cmd(0).virtualAddress)
-        when(CountOne(hits) === 0) {
+        when(~hits.orR) {
           port.bus.rsp.allowExecute := privilegeService.isMachine()
         } otherwise {
           port.bus.rsp.allowExecute := MuxOH(OHMasking.first(hits), pmps.map(_.state.x))

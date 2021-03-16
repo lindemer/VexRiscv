@@ -26,8 +26,8 @@ case class SPmp(previous : SPmp) extends Area {
   }
 
   val region = new Area {
-    val valid, locked = Bool
-    val start, end = UInt(32 bits)
+    val valid, locked = RegInit(False)
+    val start, end = Reg(UInt(32 bits)) init(0)
   }
   
   val shifted = csr.addr |<< 2
@@ -146,7 +146,7 @@ class SPmpPlugin(mRegions : Int, sRegions : Int, ioRange : UInt => Bool) extends
         val machineWrite = MuxOH(machineHit0, pmps.map(_.state.w))
         val machineExecute = MuxOH(machineHit0, pmps.map(_.state.x))
 
-        when(CountOne(machineHits) === 0) {
+        when(~machineHits.orR) {
 
           port.bus.rsp.allowRead := machineMode
           port.bus.rsp.allowWrite := machineMode
@@ -168,7 +168,7 @@ class SPmpPlugin(mRegions : Int, sRegions : Int, ioRange : UInt => Bool) extends
           val supervisorExecute = MuxOH(supervisorHit0, spmps.map(_.csr.x))
           val supervisorLocked = MuxOH(supervisorHit0, spmps.map(_.csr.l))
 
-          when(CountOne(supervisorHits) === 0) {
+          when(~supervisorHits.orR) {
 
             port.bus.rsp.allowRead := machineRead
             port.bus.rsp.allowWrite := machineWrite
