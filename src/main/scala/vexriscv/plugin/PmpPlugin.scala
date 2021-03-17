@@ -64,85 +64,68 @@ import scala.collection.mutable.ArrayBuffer
  * register defines a 4-byte wide region.
  */
 
-case class PmpInfo(init : Bits = B"8'0") extends Bundle {
-  val r = init(0)
-  val w = init(1)
-  val x = init(2)
-  val a = init(4 downto 3)
-  val l = init(7)
+case class PmpInfo(preset : Bits = B"8'0") extends Bundle {
+  val r = preset(0)
+  val w = preset(1)
+  val x = preset(2)
+  val a = preset(4 downto 3)
+  val l = preset(7)
 
   override def asBits : Bits = {
-    B(8 bits, 7 -> l, 3 -> a, 2 -> x, 1 -> w, 0 -> r)
+    B(8 bits, 7 -> l, (4 downto 3) -> a, 2 -> x, 1 -> w, 0 -> r)
   }
 }
 
-case class PmpConfig(init : Bits = B"32'0") extends Bundle {
-  val infos = init.subdivideIn(8 bits).map(x => new PmpInfo(x))
+case class PmpConf(preset : Bits = B"32'0") extends Bundle {
+  val infos = preset.subdivideIn(8 bits).reverse.map(x => new PmpInfo(x))
 
   def asMask : Bits = {
     val locks = infos.map(info => info.l)
     locks.map(l => ~(l ## l ## l ## l ## l ## l ## l ## l))
-      .foldLeft(B"0'")(_ ## _)
+      .reverse.foldLeft(Bits(0 bits))(_ ## _)
   }
 
   override def asBits : Bits = {
-    infos.map(info => info.asBits).foldLeft(B"0'")(_ ## _)
+    infos.map(info => info.asBits).reverse.foldLeft(Bits(0 bits))(_ ## _)
   }
 }
 
-class Pmp_(configs : Int = 16) extends Component {
+class Pmp(configs : Int) extends Component {
   assert(configs % 4 == 0)
 
   val io = new Bundle {
     val enable, write, sel = in Bool
     val index = in UInt(4 bits)
-    val writeData = in Bits(32 bits)
-    val readData = out Bits(32 bits)
+    val readAddr = out Bits(32 bits)
+    val readConf = out Bits(32 bits)
+    val writeAddr = in Bits(32 bits)
+    val writeConf = in Bits(32 bits)
   }
 
-  val pmpcfgs = Mem(new PmpConfig(), configs / 4)
-  val pmpaddrs = Mem(Bits(32 bits) init(0), configs)
+  val pmpConfs = Mem(new PmpConf(), configs / 4)
+  val pmpAddrs = Mem(Bits(32 bits), configs)
 
-  when (io.enable) {
-    when (io.sel) {
-      val pmpcfg = pmpcfgs.readAsync(
-        io.index(3 downto 2), 
-        readFirst
-      )
-      io.readData := pmpcfg.asBits
-      val mask = pmpcfg.asMask
-      pmpcfgs.write(
-        io.index(3 downto 2),
-        new PmpConfig(io.writeData),
-        io.enable & io.write,
-        mask
-      )
-    } otherwise {
+  val pmpConf = pmpConfs.readAsync(io.index(3 downto 2), readFirst)
+  io.readConf := pmpConf.asBits
 
-    }
-  }
+  pmpConfs.write(
+    io.index(3 downto 2),
+    new PmpConf(io.writeConf),
+    io.enable & io.write & io.sel,
+    pmpConf.asMask
+  )
 
-  io.readData := pmpaddrs.readWriteSync(
+  val locked = pmpConf.infos(io.index(1 downto 0)).l
+  io.readAddr := pmpAddrs.readWriteSync(
     io.index,
-    io.writeData,
+    io.writeAddr,
     io.enable,
-    io.write
+    io.write & ~locked & ~io.sel
   )
 
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
+/*
 case class Pmp(previous : Pmp) extends Area {
 
   def OFF = 0
@@ -223,6 +206,7 @@ case class Pmp(previous : Pmp) extends Area {
     }
   }
 }
+*/
 
 case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
 
@@ -234,9 +218,11 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
   def pmpcfg0 = 0x3a0
   def pmpaddr0 = 0x3b0
   
-  val pmps = ArrayBuffer[Pmp]()
+  //val pmps = ArrayBuffer[Pmp]()
   val dPorts = ArrayBuffer[ProtectedMemoryTranslatorPort]()
   val iPorts = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+
+  val pmp = new Pmp(regions)
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
@@ -259,29 +245,37 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
 
       // Instantiate pmpaddr0 ... pmpaddr# CSRs.
       for (region <- 0 until regions) {
-        if (region == 0) pmps += Pmp(null)
-        else pmps += Pmp(pmps.last)
-        csrService.r(pmpaddr0 + region, pmps(region).state.addr)
-        csrService.w(pmpaddr0 + region, pmps(region).csr.addr)
+        csrService.r(pmpaddr0 + region, pmp.io.readAddr)
+        csrService.w(pmpaddr0 + region, pmp.io.writeAddr)
+        csrService.onWrite(pmpaddr0 + region) {
+          pmp.io.sel := False
+          pmp.io.enable := True
+          pmp.io.write := False
+        }
+        csrService.onWrite(pmpaddr0 + region) {
+          pmp.io.sel := True
+          pmp.io.enable := True
+          pmp.io.write := True
+        }
       }
 
       // Instantiate pmpcfg0 ... pmpcfg# CSRs.
       for (pmpNcfg <- Range(0, regions, 4)) {
-        val cfgCsr = pmpcfg0 + pmpNcfg / 4
-        for (offset <- 0 until 4) {
-          csrService.r(cfgCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).state.r)
-          csrService.r(cfgCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).state.w)
-          csrService.r(cfgCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).state.x)
-          csrService.r(cfgCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).state.a)
-          csrService.r(cfgCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).state.l)
-          csrService.w(cfgCsr, (offset * 8 + 0) -> pmps(pmpNcfg + offset).csr.r)
-          csrService.w(cfgCsr, (offset * 8 + 1) -> pmps(pmpNcfg + offset).csr.w)
-          csrService.w(cfgCsr, (offset * 8 + 2) -> pmps(pmpNcfg + offset).csr.x)
-          csrService.w(cfgCsr, (offset * 8 + 3) -> pmps(pmpNcfg + offset).csr.a)
-          csrService.w(cfgCsr, (offset * 8 + 7) -> pmps(pmpNcfg + offset).csr.l)
+        csrService.r(pmpcfg0 + pmpNcfg / 4, pmp.io.readConf)
+        csrService.w(pmpcfg0 + pmpNcfg / 4, pmp.io.writeConf)
+        csrService.onWrite(pmpcfg0 + pmpNcfg / 4) {
+          pmp.io.sel := False
+          pmp.io.enable := True
+          pmp.io.write := False
+        }
+        csrService.onWrite(pmpcfg0 + pmpNcfg / 4) {
+          pmp.io.sel := True
+          pmp.io.enable := True
+          pmp.io.write := True
         }
       }
 
+      /*
       def check(address : UInt) : ArrayBuffer[Bool] = {
         pmps.map(pmp => pmp.region.valid &
                         pmp.region.start <= address &
@@ -325,6 +319,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
           port.bus.rsp.allowExecute := MuxOH(OHMasking.first(hits), pmps.map(_.state.x))
         }
       }
+      */
     }
   }
 }
