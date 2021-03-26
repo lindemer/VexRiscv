@@ -63,101 +63,173 @@ import scala.collection.mutable.ArrayBuffer
  * register defines a 4-byte wide region.
  */
 
-case class PmpRegister(previous : PmpRegister) extends Area {
 
+trait Pmp {
   def OFF = 0
   def TOR = 1
   def NA4 = 2
   def NAPOT = 3
 
-  val state = new Area {
-    val r, w, x = Reg(Bool)
-    val l = RegInit(False)
-    val a = Reg(UInt(2 bits)) init(0)
-    val addr = Reg(UInt(32 bits))
+  def xlen = 32
+  def rBit = 0
+  def wBit = 1
+  def xBit = 2
+  def aBits = 4 downto 3
+  def lBit = 7
+}
+
+class PmpSetter() extends Component with Pmp {
+  val io = new Bundle {
+    val a = in Bits(2 bits)
+    val addr = in UInt(xlen bits)
+    val prevHi = in UInt(30 bits)
+    val boundLo, boundHi = out UInt(30 bits)
   }
 
-  // CSR writes connect to these signals rather than the internal state
-  // registers. This makes locking and WARL possible.
+  val shifted = io.addr(31 downto 2)
+  io.boundLo := shifted
+  io.boundHi := shifted
+
+  switch (io.a) {
+    is (TOR) {
+      io.boundLo := io.prevHi
+    }
+    is (NA4) {
+      io.boundHi := shifted + 1
+    }
+    is (NAPOT) {
+      val mask = io.addr & ~(io.addr + 1)
+      val boundLo = (io.addr ^ mask)(29 downto 0)
+      io.boundLo := boundLo
+      io.boundHi := boundLo + ((mask + 1) |<< 3)(29 downto 0)
+    }
+  }
+}
+
+class PmpController(count : Int) extends Component with Pmp {
+  assert(count % 4 == 0)
+  assert(count <= 16)
+
+  val pmpaddr = Mem(UInt(xlen bits), count)
+  val pmpcfg = Reg(Bits(8 * count bits)) init(0)
+  val boundLo, boundHi = Mem(UInt(30 bits), count)
+
+  val io = new Bundle {
+    val config = in Bool
+    val index = in UInt(log2Up(count) bits)
+    val read = out Bits(xlen bits)
+    val write = slave Stream(Bits(xlen bits))
+  }
+
+  val cfgSel = io.index(log2Up(count) - 1 downto 2)
+  val pmpcfgs = pmpcfg.subdivideIn(xlen bits)
+  val pmpcfgN = pmpcfgs(cfgSel)
+  val pmpNcfg = pmpcfgN.subdivideIn(8 bits)
+  
   val csr = new Area {
-    val r, w, x = Bool
-    val l = Bool
-    val a = UInt(2 bits)
-    val addr = UInt(32 bits)
-  }
-
-  // Last valid assignment wins; nothing happens if a user-initiated write did 
-  // not occur on this clock cycle.
-  csr.r    := state.r
-  csr.w    := state.w
-  csr.x    := state.x
-  csr.l    := state.l
-  csr.a    := state.a
-  csr.addr := state.addr
-
-  // Computed PMP region bounds
-  val region = new Area {
-    val valid, locked = Bool
-    val start, end = UInt(32 bits)
-  }
-
-  when(~state.l) {
-    state.r    := csr.r
-    state.w    := csr.w
-    state.x    := csr.x
-    state.l    := csr.l
-    state.a    := csr.a
-    state.addr := csr.addr
-
-    if (csr.l == True & csr.a == TOR) {
-      previous.state.l := True
+    when (io.config) {
+      when (io.write.valid) {
+        switch(cfgSel) {
+          for (i <- 0 until (count / 4)) {
+            is(i) {
+              for (j <- Range(0, xlen, 8)) {
+                val bitRange = j + xlen * i + lBit downto j + xlen * i
+                val overwrite = io.write.payload.subdivideIn(8 bits)(j / 8)
+                val locked = pmpcfgs(i).subdivideIn(8 bits)(j / 8)(lBit)
+                when (~locked) {
+                  pmpcfg(bitRange).assignFromBits(overwrite)
+                  if (j != 0 || i != 0) {
+                    when (overwrite(lBit) & overwrite(aBits) === TOR) {
+                      pmpcfg(j + xlen * i - 1) := True
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      io.read.assignFromBits(pmpcfgN)
+    } otherwise {
+      when (io.write.valid) {
+        val lock = pmpNcfg(io.index(1 downto 0))(lBit)
+        pmpaddr.write(
+          io.index,
+          io.write.payload.asUInt,
+          io.write.valid & ~io.config & ~lock
+        )
+      }
+      io.read := pmpaddr.readAsync(io.index).asBits
     }
   }
 
-  val shifted = state.addr |<< 2
-  val mask = state.addr & ~(state.addr + 1)
-  val masked = (state.addr & ~mask) |<< 2
+  val pipeline = new Area {
+    val setter = new PmpSetter()
+    val enable = RegInit(False)
+    val counter = Reg(UInt(log2Up(count) bits))
+    val setNext = RegInit(False)
+    
+    when (io.config) {
+      when (io.write.valid & ~enable) {
+        enable := True
+        io.write.ready := False
+        counter := io.index(log2Up(count) - 1 downto 2) @@ U"2'00"
+      }.elsewhen (enable) {
+        counter := counter + 1
+        when (counter(1 downto 0) === 3) {
+          enable := False
+          io.write.ready := True
+        } otherwise {
+          io.write.ready := False
+        }
+      } otherwise {
+        io.write.ready := True
+      }
+    } otherwise {
+      when (io.write.valid & ~enable) {
+        enable := True
+        counter := io.index
+        io.write.ready := False
+        when (io.index =/= (count - 1)) {
+          setNext := True
+        } otherwise {
+          setNext := False
+        }
+      }.elsewhen (setNext) {
+        io.write.ready := False
+        counter := counter + 1
+        setNext := False
+      } otherwise {
+        enable := False
+        io.write.ready := True
+      }
+    }
 
-  // PMP changes take effect two clock cycles after the initial CSR write (i.e.,
-  // settings propagate from csr -> state -> region).
-  region.locked := state.l
-  region.valid := True
-
-  switch(csr.a) {
-    is(TOR) {
-      if (previous == null) region.start := 0
-      else region.start := previous.region.end
-      region.end := shifted
+    val sel = counter(log2Up(count) - 1 downto 2)
+    setter.io.a := pmpcfgs(sel).subdivideIn(8 bits)(counter(1 downto 0))(aBits)
+    when (counter === 0) {
+      setter.io.prevHi := 0
+    } otherwise {
+      setter.io.prevHi := boundHi(counter - 1)
     }
-    is(NA4) {
-      region.start := shifted
-      region.end := shifted + 4
-    }
-    is(NAPOT) {
-      region.start := masked
-      region.end := masked + ((mask + 1) |<< 3)
-    }
-    default {
-      region.start := 0
-      region.end := shifted
-      region.valid := False
+    setter.io.addr := pmpaddr(counter)
+    when (enable) {
+      boundLo(counter) := setter.io.boundLo
+      boundHi(counter) := setter.io.boundHi
     }
   }
 }
 
 case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
 
-class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator {
-
-  // Each pmpcfg# CSR configures four regions.
-  assert((regions % 4) == 0)
-   
-  val pmps = ArrayBuffer[PmpRegister]()
-  val portsInfo = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator with Pmp {
+  
+  val controller = new PmpController(regions)
+  val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
-    portsInfo += port
+    ports += port
     port.bus
   }
 
@@ -170,77 +242,33 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
     val privilegeService = pipeline.service(classOf[PrivilegeService])
 
     val core = pipeline plug new Area {
-
-      // Instantiate pmpaddr0 ... pmpaddr# CSRs.
-      for (i <- 0 until regions) {
-        if (i == 0) {
-          pmps += PmpRegister(null)
-        } else {
-          pmps += PmpRegister(pmps.last)
-        }
-        csrService.r(0x3b0 + i, pmps(i).state.addr)
-        csrService.w(0x3b0 + i, pmps(i).csr.addr)
-      }
-
-      // Instantiate pmpcfg0 ... pmpcfg# CSRs.
-      for (i <- 0 until (regions / 4)) {
-        csrService.r(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).state.l, 23 -> pmps((i * 4) + 2).state.l,
-          15 -> pmps((i * 4) + 1).state.l,  7 -> pmps((i * 4)    ).state.l,
-          27 -> pmps((i * 4) + 3).state.a, 26 -> pmps((i * 4) + 3).state.x,
-          25 -> pmps((i * 4) + 3).state.w, 24 -> pmps((i * 4) + 3).state.r,
-          19 -> pmps((i * 4) + 2).state.a, 18 -> pmps((i * 4) + 2).state.x,
-          17 -> pmps((i * 4) + 2).state.w, 16 -> pmps((i * 4) + 2).state.r,
-          11 -> pmps((i * 4) + 1).state.a, 10 -> pmps((i * 4) + 1).state.x,
-           9 -> pmps((i * 4) + 1).state.w,  8 -> pmps((i * 4) + 1).state.r,
-           3 -> pmps((i * 4)    ).state.a,  2 -> pmps((i * 4)    ).state.x,
-           1 -> pmps((i * 4)    ).state.w,  0 -> pmps((i * 4)    ).state.r
-        )
-        csrService.w(0x3a0 + i,
-          31 -> pmps((i * 4) + 3).csr.l, 23 -> pmps((i * 4) + 2).csr.l,
-          15 -> pmps((i * 4) + 1).csr.l,  7 -> pmps((i * 4)    ).csr.l,
-          27 -> pmps((i * 4) + 3).csr.a, 26 -> pmps((i * 4) + 3).csr.x,
-          25 -> pmps((i * 4) + 3).csr.w, 24 -> pmps((i * 4) + 3).csr.r,
-          19 -> pmps((i * 4) + 2).csr.a, 18 -> pmps((i * 4) + 2).csr.x,
-          17 -> pmps((i * 4) + 2).csr.w, 16 -> pmps((i * 4) + 2).csr.r,
-          11 -> pmps((i * 4) + 1).csr.a, 10 -> pmps((i * 4) + 1).csr.x,
-           9 -> pmps((i * 4) + 1).csr.w,  8 -> pmps((i * 4) + 1).csr.r,
-           3 -> pmps((i * 4)    ).csr.a,  2 -> pmps((i * 4)    ).csr.x,
-           1 -> pmps((i * 4)    ).csr.w,  0 -> pmps((i * 4)    ).csr.r
-        )
-      }
-
-      // Connect memory ports to PMP logic.
-      val ports = for ((port, portId) <- portsInfo.zipWithIndex) yield new Area {
-
+      for (port <- ports) yield new Area {
         val address = port.bus.cmd(0).virtualAddress
         port.bus.rsp.physicalAddress := address
-
-        // Only the first matching PMP region applies.
-        val hits = pmps.map(pmp => pmp.region.valid &
-                                   pmp.region.start <= address &
-                                   pmp.region.end > address &
-                                  (pmp.region.locked | ~privilegeService.isMachine()))
-
-        // M-mode has full access by default, others have none.
-        when(CountOne(hits) === 0) {
-          port.bus.rsp.allowRead := privilegeService.isMachine()
-          port.bus.rsp.allowWrite := privilegeService.isMachine()
-          port.bus.rsp.allowExecute := privilegeService.isMachine()
-        } otherwise {
-          port.bus.rsp.allowRead := MuxOH(OHMasking.first(hits), pmps.map(_.state.r))
-          port.bus.rsp.allowWrite := MuxOH(OHMasking.first(hits), pmps.map(_.state.w))
-          port.bus.rsp.allowExecute := MuxOH(OHMasking.first(hits), pmps.map(_.state.x))
-        }
-
-        port.bus.rsp.isIoAccess := ioRange(port.bus.rsp.physicalAddress)
+        port.bus.rsp.isIoAccess := ioRange(address)
         port.bus.rsp.isPaging := False
         port.bus.rsp.exception := False
         port.bus.rsp.refilling := False
         port.bus.busy := False
-
+        
+        val machine = privilegeService.isMachine()
+        val pmpcfg = controller.pmpcfg.subdivideIn(8 bits)
+        val floor = address(31 downto 2)
+        
+        port.bus.rsp.allowRead := machine
+        port.bus.rsp.allowWrite := machine
+        port.bus.rsp.allowExecute := machine
+        
+        for (i <- 0 until regions) {
+          when (floor >= controller.boundLo(i) & floor < controller.boundHi(i)) {
+            when ((pmpcfg(i)(lBit) | ~machine) & pmpcfg(i)(aBits) =/= 0) {
+              port.bus.rsp.allowRead := pmpcfg(i)(rBit)
+              port.bus.rsp.allowWrite := pmpcfg(i)(wBit)
+              port.bus.rsp.allowExecute := pmpcfg(i)(xBit)
+            }
+          }
+        }
       }
     }
   }
 }
-
