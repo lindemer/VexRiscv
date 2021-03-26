@@ -1113,12 +1113,12 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
             memory.output(REGFILE_WRITE_DATA) := memory.input(PIPELINED_CSR_READ)
           }
         }
-//
-//        Component.current.rework{
-//          when(arbitration.isFiring && input(IS_CSR)) {
-//            memory.input(REGFILE_WRITE_DATA).getDrivingReg := readData
-//          }
-//        }
+        
+        val pmp = pipeline.service(classOf[PmpPlugin])
+        pmp.io.config := False
+        pmp.io.index := U"2'00"
+        pmp.io.write.valid := False
+        pmp.io.write.payload := B"32'00"
 
         //Translation of the csrMapping into real logic
         val csrAddress = input(INSTRUCTION)(csrRange)

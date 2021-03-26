@@ -63,7 +63,6 @@ import scala.collection.mutable.ArrayBuffer
  * register defines a 4-byte wide region.
  */
 
-
 trait Pmp {
   def OFF = 0
   def TOR = 1
@@ -106,126 +105,23 @@ class PmpSetter() extends Component with Pmp {
   }
 }
 
-class PmpController(count : Int) extends Component with Pmp {
-  assert(count % 4 == 0)
-  assert(count <= 16)
+case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
 
-  val pmpaddr = Mem(UInt(xlen bits), count)
-  val pmpcfg = Reg(Bits(8 * count bits)) init(0)
-  val boundLo, boundHi = Mem(UInt(30 bits), count)
+class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Component 
+    with Plugin[VexRiscv] with MemoryTranslator with Pmp {
+
+  assert(regions % 4 == 0)
+  assert(regions <= 16)
 
   val io = new Bundle {
     val config = in Bool
-    val index = in UInt(log2Up(count) bits)
+    val index = in UInt(log2Up(regions) bits)
     val read = out Bits(xlen bits)
     val write = slave Stream(Bits(xlen bits))
   }
 
-  val cfgSel = io.index(log2Up(count) - 1 downto 2)
-  val pmpcfgs = pmpcfg.subdivideIn(xlen bits)
-  val pmpcfgN = pmpcfgs(cfgSel)
-  val pmpNcfg = pmpcfgN.subdivideIn(8 bits)
-  
-  val csr = new Area {
-    when (io.config) {
-      when (io.write.valid) {
-        switch(cfgSel) {
-          for (i <- 0 until (count / 4)) {
-            is(i) {
-              for (j <- Range(0, xlen, 8)) {
-                val bitRange = j + xlen * i + lBit downto j + xlen * i
-                val overwrite = io.write.payload.subdivideIn(8 bits)(j / 8)
-                val locked = pmpcfgs(i).subdivideIn(8 bits)(j / 8)(lBit)
-                when (~locked) {
-                  pmpcfg(bitRange).assignFromBits(overwrite)
-                  if (j != 0 || i != 0) {
-                    when (overwrite(lBit) & overwrite(aBits) === TOR) {
-                      pmpcfg(j + xlen * i - 1) := True
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      io.read.assignFromBits(pmpcfgN)
-    } otherwise {
-      when (io.write.valid) {
-        val lock = pmpNcfg(io.index(1 downto 0))(lBit)
-        pmpaddr.write(
-          io.index,
-          io.write.payload.asUInt,
-          io.write.valid & ~io.config & ~lock
-        )
-      }
-      io.read := pmpaddr.readAsync(io.index).asBits
-    }
-  }
-
-  val pipeline = new Area {
-    val setter = new PmpSetter()
-    val enable = RegInit(False)
-    val counter = Reg(UInt(log2Up(count) bits))
-    val setNext = RegInit(False)
-    
-    when (io.config) {
-      when (io.write.valid & ~enable) {
-        enable := True
-        io.write.ready := False
-        counter := io.index(log2Up(count) - 1 downto 2) @@ U"2'00"
-      }.elsewhen (enable) {
-        counter := counter + 1
-        when (counter(1 downto 0) === 3) {
-          enable := False
-          io.write.ready := True
-        } otherwise {
-          io.write.ready := False
-        }
-      } otherwise {
-        io.write.ready := True
-      }
-    } otherwise {
-      when (io.write.valid & ~enable) {
-        enable := True
-        counter := io.index
-        io.write.ready := False
-        when (io.index =/= (count - 1)) {
-          setNext := True
-        } otherwise {
-          setNext := False
-        }
-      }.elsewhen (setNext) {
-        io.write.ready := False
-        counter := counter + 1
-        setNext := False
-      } otherwise {
-        enable := False
-        io.write.ready := True
-      }
-    }
-
-    val sel = counter(log2Up(count) - 1 downto 2)
-    setter.io.a := pmpcfgs(sel).subdivideIn(8 bits)(counter(1 downto 0))(aBits)
-    when (counter === 0) {
-      setter.io.prevHi := 0
-    } otherwise {
-      setter.io.prevHi := boundHi(counter - 1)
-    }
-    setter.io.addr := pmpaddr(counter)
-    when (enable) {
-      boundLo(counter) := setter.io.boundLo
-      boundHi(counter) := setter.io.boundHi
-    }
-  }
-}
-
-case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
-
-class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator with Pmp {
-  
+  var setter : PmpSetter = null
   val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
-  var controller : PmpController = null
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
@@ -234,7 +130,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
   }
 
   override def setup(pipeline: VexRiscv): Unit = {
-    val controller = new PmpController(regions)
+    setter = new PmpSetter()
   }
 
   override def build(pipeline: VexRiscv): Unit = {
@@ -245,6 +141,108 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
     val csrService = pipeline.service(classOf[CsrInterface])
     val privilegeService = pipeline.service(classOf[PrivilegeService])
 
+    val pmpaddr = Mem(UInt(xlen bits), regions)
+    val pmpcfg = Reg(Bits(8 * regions bits)) init(0)
+    val boundLo, boundHi = Mem(UInt(30 bits), regions)
+
+    val cfgSelect = io.index(log2Up(regions) - 1 downto 2)
+    val cfgRegister = pmpcfg.subdivideIn(xlen bits)
+    val cfgRegion = pmpcfg.subdivideIn(8 bits)
+    val pmpcfgN = cfgRegister(cfgSelect)
+    val pmpNcfg = pmpcfgN.subdivideIn(8 bits)
+    
+    val csr = new Area {
+      when (io.config) {
+        when (io.write.valid) {
+          switch(cfgSelect) {
+            for (i <- 0 until (regions / 4)) {
+              is(i) {
+                for (j <- Range(0, xlen, 8)) {
+                  val bitRange = j + xlen * i + lBit downto j + xlen * i
+                  val overwrite = io.write.payload.subdivideIn(8 bits)(j / 8)
+                  val locked = cfgRegister(i).subdivideIn(8 bits)(j / 8)(lBit)
+                  when (~locked) {
+                    pmpcfg(bitRange).assignFromBits(overwrite)
+                    if (j != 0 || i != 0) {
+                      when (overwrite(lBit) & overwrite(aBits) === TOR) {
+                        pmpcfg(j + xlen * i - 1) := True
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        io.read.assignFromBits(pmpcfgN)
+      } otherwise {
+        when (io.write.valid) {
+          val lock = pmpNcfg(io.index(1 downto 0))(lBit)
+          pmpaddr.write(
+            io.index,
+            io.write.payload.asUInt,
+            io.write.valid & ~io.config & ~lock
+          )
+        }
+        io.read := pmpaddr.readAsync(io.index).asBits
+      }
+    }
+
+    val controller = new Area {
+      val enable = RegInit(False)
+      val counter = Reg(UInt(log2Up(regions) bits))
+      val setNext = RegInit(False)
+      
+      when (io.config) {
+        when (io.write.valid & ~enable) {
+          enable := True
+          io.write.ready := False
+          counter := io.index(log2Up(regions) - 1 downto 2) @@ U"2'00"
+        }.elsewhen (enable) {
+          counter := counter + 1
+          when (counter(1 downto 0) === 3) {
+            enable := False
+            io.write.ready := True
+          } otherwise {
+            io.write.ready := False
+          }
+        } otherwise {
+          io.write.ready := True
+        }
+      } otherwise {
+        when (io.write.valid & ~enable) {
+          enable := True
+          counter := io.index
+          io.write.ready := False
+          when (io.index =/= (regions - 1)) {
+            setNext := True
+          } otherwise {
+            setNext := False
+          }
+        }.elsewhen (setNext) {
+          io.write.ready := False
+          counter := counter + 1
+          setNext := False
+        } otherwise {
+          enable := False
+          io.write.ready := True
+        }
+      }
+
+      val sel = counter(log2Up(regions) - 1 downto 2)
+      setter.io.a := cfgRegister(sel).subdivideIn(8 bits)(counter(1 downto 0))(aBits)
+      when (counter === 0) {
+        setter.io.prevHi := 0
+      } otherwise {
+        setter.io.prevHi := boundHi(counter - 1)
+      }
+      setter.io.addr := pmpaddr(counter)
+      when (enable) {
+        boundLo(counter) := setter.io.boundLo
+        boundHi(counter) := setter.io.boundHi
+      }
+    }
+
     val core = pipeline plug new Area {
       for (port <- ports) yield new Area {
         val address = port.bus.cmd(0).virtualAddress
@@ -254,15 +252,8 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.exception := False
         port.bus.rsp.refilling := False
         port.bus.busy := False
-        
-        // placeholder
-        controller.io.config := False
-        controller.io.index := 0
-        controller.io.write.valid := False
-        controller.io.write.payload := B"32'0"
 
         val machine = privilegeService.isMachine()
-        val pmpcfg = controller.pmpcfg.subdivideIn(8 bits)
         val floor = address(31 downto 2)
         
         port.bus.rsp.allowRead := machine
@@ -270,11 +261,14 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.allowExecute := machine
         
         for (i <- 0 until regions) {
-          when (floor >= controller.boundLo(i) & floor < controller.boundHi(i)) {
-            when ((pmpcfg(i)(lBit) | ~machine) & pmpcfg(i)(aBits) =/= 0) {
-              port.bus.rsp.allowRead := pmpcfg(i)(rBit)
-              port.bus.rsp.allowWrite := pmpcfg(i)(wBit)
-              port.bus.rsp.allowExecute := pmpcfg(i)(xBit)
+          when (floor >= boundLo(i) & floor < boundHi(i)) {
+            port.bus.rsp.allowRead := True
+            port.bus.rsp.allowWrite := True
+            port.bus.rsp.allowExecute := True
+            when ((cfgRegion(i)(lBit) | ~machine) & cfgRegion(i)(aBits) =/= 0) {
+              port.bus.rsp.allowRead := cfgRegion(i)(rBit)
+              port.bus.rsp.allowWrite := cfgRegion(i)(wBit)
+              port.bus.rsp.allowExecute := cfgRegion(i)(xBit)
             }
           }
         }
