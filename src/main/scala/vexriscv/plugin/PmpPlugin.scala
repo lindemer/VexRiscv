@@ -224,13 +224,17 @@ case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
 
 class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator with Pmp {
   
-  val controller = new PmpController(regions)
   val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+  var controller : PmpController = null
 
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
     ports += port
     port.bus
+  }
+
+  override def setup(pipeline: VexRiscv): Unit = {
+    val controller = new PmpController(regions)
   }
 
   override def build(pipeline: VexRiscv): Unit = {
@@ -251,6 +255,12 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.refilling := False
         port.bus.busy := False
         
+        // placeholder
+        controller.io.config := False
+        controller.io.index := 0
+        controller.io.write.valid := False
+        controller.io.write.payload := B"32'0"
+
         val machine = privilegeService.isMachine()
         val pmpcfg = controller.pmpcfg.subdivideIn(8 bits)
         val floor = address(31 downto 2)
