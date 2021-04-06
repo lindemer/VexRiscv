@@ -1031,7 +1031,6 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
         insert(CSR_READ_OPCODE) := input(INSTRUCTION)(13 downto 7) =/= B"0100000"
       }
 
-
       execute plug new Area{
         import execute._
         //Manage WFI instructions
@@ -1103,25 +1102,29 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
           True -> Mux(input(INSTRUCTION)(12), readToWriteData & ~writeSrc, readToWriteData | writeSrc)
         )
 
-        when(arbitration.isValid && input(IS_CSR)) {
-          if(!pipelineCsrRead) output(REGFILE_WRITE_DATA) := readData
-          arbitration.haltItself setWhen(blockedBySideEffects)
-        }
-        if(pipelineCsrRead){
-          insert(PIPELINED_CSR_READ) := readData
-          when(memory.arbitration.isValid && memory.input(IS_CSR)) {
-            memory.output(REGFILE_WRITE_DATA) := memory.input(PIPELINED_CSR_READ)
+        val csrAddress = input(INSTRUCTION)(csrRange)
+        val pmpEnabled = pipeline.serviceExist(classOf[PmpPlugin])
+        val pmpAccess = if (pmpEnabled) {
+          (csrAddress(11 downto 4) === 0x3a | csrAddress(11 downto 4) === 0x3b) 
+        } else False
+
+        when (~pmpAccess) {
+          when(arbitration.isValid && input(IS_CSR)) {
+            if(!pipelineCsrRead) output(REGFILE_WRITE_DATA) := readData
+            arbitration.haltItself setWhen(blockedBySideEffects)
           }
+          if(pipelineCsrRead){
+            insert(PIPELINED_CSR_READ) := readData
+            when(memory.arbitration.isValid && memory.input(IS_CSR)) {
+              memory.output(REGFILE_WRITE_DATA) := memory.input(PIPELINED_CSR_READ)
+            }
+          }
+        // } otherwise {
+        //   // FIXME: for debugging purposes
+        //   illegalAccess := False
         }
-        
-        val pmp = pipeline.service(classOf[PmpPlugin])
-        pmp.io.config := False
-        pmp.io.index := U"2'00"
-        pmp.io.write.valid := False
-        pmp.io.write.payload := B"32'00"
 
         //Translation of the csrMapping into real logic
-        val csrAddress = input(INSTRUCTION)(csrRange)
         Component.current.afterElaboration{
           def doJobs(jobs : ArrayBuffer[Any]): Unit ={
             val withWrite = jobs.exists(j => j.isInstanceOf[CsrWrite] || j.isInstanceOf[CsrOnWrite] || j.isInstanceOf[CsrDuringWrite])
