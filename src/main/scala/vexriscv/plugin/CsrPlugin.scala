@@ -1119,9 +1119,8 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
               memory.output(REGFILE_WRITE_DATA) := memory.input(PIPELINED_CSR_READ)
             }
           }
-        // } otherwise {
-        //   // FIXME: for debugging purposes
-        //   illegalAccess := False
+        } otherwise {
+          illegalAccess := False
         }
 
         //Translation of the csrMapping into real logic

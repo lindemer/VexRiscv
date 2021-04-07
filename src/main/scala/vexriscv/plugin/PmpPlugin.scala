@@ -85,7 +85,7 @@ class PmpSetter() extends Component with Pmp {
     val boundLo, boundHi = out UInt(30 bits)
   }
 
-  val shifted = io.addr(31 downto 2)
+  val shifted = io.addr(29 downto 0)
   io.boundLo := shifted
   io.boundHi := shifted
 
@@ -171,6 +171,41 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
     execute plug new Area {
       import execute._
 
+      // TODO: remove
+      val pmpcfg_ = pmpcfg
+      val boundLo0 = boundLo(U"4'x0")
+      val boundHi0 = boundHi(U"4'x0")
+      val boundLo1 = boundLo(U"4'x1")
+      val boundHi1 = boundHi(U"4'x1")
+      val boundLo2 = boundLo(U"4'x2")
+      val boundHi2 = boundHi(U"4'x2")
+      val boundLo3 = boundLo(U"4'x3")
+      val boundHi3 = boundHi(U"4'x3")
+      val boundLo4 = boundLo(U"4'x4")
+      val boundHi4 = boundHi(U"4'x4")
+      val boundLo5 = boundLo(U"4'x5")
+      val boundHi5 = boundHi(U"4'x5")
+      val boundLo6 = boundLo(U"4'x6")
+      val boundHi6 = boundHi(U"4'x6")
+      val boundLo7 = boundLo(U"4'x7")
+      val boundHi7 = boundHi(U"4'x7")
+      val boundLo8 = boundLo(U"4'x8")
+      val boundHi8 = boundHi(U"4'x8")
+      val boundLo9 = boundLo(U"4'x9")
+      val boundHi9 = boundHi(U"4'x9")
+      val boundLo10 = boundLo(U"4'xa")
+      val boundHi10 = boundHi(U"4'xa")
+      val boundLo11 = boundLo(U"4'xb")
+      val boundHi11 = boundHi(U"4'xb")
+      val boundLo12 = boundLo(U"4'xc")
+      val boundHi12 = boundHi(U"4'xc")
+      val boundLo13 = boundLo(U"4'xd")
+      val boundHi13 = boundHi(U"4'xd")
+      val boundLo14 = boundLo(U"4'xe")
+      val boundHi14 = boundHi(U"4'xe")
+      val boundLo15 = boundLo(U"4'xf")
+      val boundHi15 = boundHi(U"4'xf")
+
       // copied from CSR plugin
       val csrAddress = input(INSTRUCTION)(csrRange)
       val addrAccess = csrAddress(11 downto 4) === 0x3b
@@ -183,6 +218,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       // TODO: support masked CSR operations
       val ioWritePayload = input(SRC1)
 
+      // TODO: rename
       val ioIndex = csrAddress(3 downto 0).asUInt
       val ioConfig = cfgAccess
       val ioWriteValid = writeEnable
@@ -269,15 +305,24 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
           }
         }
 
-        val sel = counter(log2Up(regions) - 1 downto 2)
-        setter.io.a := cfgRegister(sel).subdivideIn(8 bits)(counter(1 downto 0))(aBits)
+        when (ioConfig) {
+          setter.io.a := ioWritePayload.subdivideIn(8 bits)(counter(1 downto 0))(aBits)
+          setter.io.addr := pmpaddr(counter)
+        } otherwise {
+          setter.io.a := cfgRegion(counter)(aBits)
+          when (setNext) {
+            setter.io.addr := ioWritePayload.asUInt
+          } otherwise {
+            setter.io.addr := pmpaddr(counter)
+          }
+        }
+
         when (counter === 0) {
           setter.io.prevHi := 0
         } otherwise {
           setter.io.prevHi := boundHi(counter - 1)
         }
-        setter.io.addr := pmpaddr(counter)
-        when (enable) {
+        when (enable & ~cfgRegion(counter)(lBit)) {
           boundLo(counter) := setter.io.boundLo
           boundHi(counter) := setter.io.boundHi
         }
@@ -304,6 +349,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         
         for (i <- regions - 1 to 0 by -1) {
           when (floor >= boundLo(U(i, log2Up(regions) bits)) & floor < boundHi(U(i, log2Up(regions) bits))) {
+            port.bus.rsp.isPaging := True
             when ((cfgRegion(i)(lBit) | ~machine) & cfgRegion(i)(aBits) =/= 0) {
               port.bus.rsp.allowRead := cfgRegion(i)(rBit)
               port.bus.rsp.allowWrite := cfgRegion(i)(wBit)
