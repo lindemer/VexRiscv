@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 Samuel Lindemer <samuel.lindemer@ri.se>
+ * Copyright (c) 2021 Samuel Lindemer <samuel.lindemer@ri.se>
  *
  * SPDX-License-Identifier: MIT
  */
@@ -148,42 +148,6 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
     execute plug new Area {
       import execute._
 
-      // For debugging purposes.
-      val pmpcfg_ = pmpcfg
-      val boundLo0 = boundLo(U"4'x0")
-      val boundHi0 = boundHi(U"4'x0")
-      val boundLo1 = boundLo(U"4'x1")
-      val boundHi1 = boundHi(U"4'x1")
-      val boundLo2 = boundLo(U"4'x2")
-      val boundHi2 = boundHi(U"4'x2")
-      val boundLo3 = boundLo(U"4'x3")
-      val boundHi3 = boundHi(U"4'x3")
-      val boundLo4 = boundLo(U"4'x4")
-      val boundHi4 = boundHi(U"4'x4")
-      val boundLo5 = boundLo(U"4'x5")
-      val boundHi5 = boundHi(U"4'x5")
-      val boundLo6 = boundLo(U"4'x6")
-      val boundHi6 = boundHi(U"4'x6")
-      val boundLo7 = boundLo(U"4'x7")
-      val boundHi7 = boundHi(U"4'x7")
-      val boundLo8 = boundLo(U"4'x8")
-      val boundHi8 = boundHi(U"4'x8")
-      val boundLo9 = boundLo(U"4'x9")
-      val boundHi9 = boundHi(U"4'x9")
-      val boundLo10 = boundLo(U"4'xa")
-      val boundHi10 = boundHi(U"4'xa")
-      val boundLo11 = boundLo(U"4'xb")
-      val boundHi11 = boundHi(U"4'xb")
-      val boundLo12 = boundLo(U"4'xc")
-      val boundHi12 = boundHi(U"4'xc")
-      val boundLo13 = boundLo(U"4'xd")
-      val boundHi13 = boundHi(U"4'xd")
-      val boundLo14 = boundLo(U"4'xe")
-      val boundHi14 = boundHi(U"4'xe")
-      val boundLo15 = boundLo(U"4'xf")
-      val boundHi15 = boundHi(U"4'xf")
-      val lockMask_ = lockMask
-
       val csrAddress = input(INSTRUCTION)(csrRange)
       val accessAddr = input(PMP_ADDR_ACCESS)
       val accessCfg = input(PMP_CFG_ACCESS)
@@ -191,22 +155,30 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       val pmpRead = arbitration.isValid && input(IS_CSR) && input(CSR_READ_OPCODE) & (accessAddr | accessCfg)
       val pmpIndex = csrAddress(3 downto 0).asUInt
       val pmpSelect = pmpIndex(1 downto 0)
-      val pmpcfgN = cfgRegister(pmpSelect)
-      val pmpNcfg = pmpcfgN.subdivideIn(8 bits)
 
-      // TODO: support masked/immediate CSR operations
-      val inputPayload = input(SRC1)
+      val readAddr = pmpaddr.readAsync(pmpIndex).asBits
+      val readCfg = cfgRegister(pmpSelect)
+      val readToWrite = Mux(accessCfg, readCfg, readAddr)
+      val writeSrc = input(SRC1)
+      val writeData = input(INSTRUCTION)(13).mux(
+        False -> writeSrc,
+        True -> Mux(
+          input(INSTRUCTION)(12),
+          readToWrite & ~writeSrc,
+          readToWrite | writeSrc
+        )
+      )
       
       val writer = new Area {
         when (accessCfg) {
-          output(REGFILE_WRITE_DATA).assignFromBits(pmpcfgN)
+          output(REGFILE_WRITE_DATA).assignFromBits(readCfg)
           when (pmpWrite) {
             switch(pmpSelect) {
               for (i <- 0 until (regions / 4)) {
                 is(i) {
                   for (j <- Range(0, xlen, 8)) {
                     val bitRange = j + xlen * i + lBit downto j + xlen * i
-                    val overwrite = inputPayload.subdivideIn(8 bits)(j / 8)
+                    val overwrite = writeData.subdivideIn(8 bits)(j / 8)
                     val locked = cfgRegister(i).subdivideIn(8 bits)(j / 8)(lBit)
                     lockMask(j / 8) := locked
                     when (~locked) {
@@ -223,11 +195,9 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
             }
           }
         }.elsewhen (accessAddr) {
-          output(REGFILE_WRITE_DATA) := pmpaddr.readAsync(pmpIndex).asBits
-          when (pmpWrite) {
-            val locked = pmpNcfg(pmpIndex(1 downto 0))(lBit)
-            pmpaddr.write(pmpIndex, inputPayload.asUInt, ~locked)
-          }
+          output(REGFILE_WRITE_DATA) := readAddr
+          val locked = cfgRegion(pmpIndex)(lBit)
+          pmpaddr.write(pmpIndex, writeData.asUInt, ~locked & pmpWrite)
         }
       }
             
@@ -281,12 +251,12 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         }
 
         when (accessCfg) {
-          setter.io.a := inputPayload.subdivideIn(8 bits)(counter(1 downto 0))(aBits)
+          setter.io.a := writeData.subdivideIn(8 bits)(counter(1 downto 0))(aBits)
           setter.io.addr := pmpaddr(counter) 
         } otherwise {
           setter.io.a := cfgRegion(counter)(aBits)
           when (counter === pmpIndex) {
-            setter.io.addr := inputPayload.asUInt
+            setter.io.addr := writeData.asUInt
           } otherwise {
             setter.io.addr := pmpaddr(counter)
           }
@@ -298,7 +268,9 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
           setter.io.prevHi := boundHi(counter - 1)
         }
         
-        when (enable & ~lockMask(counter(1 downto 0))) {
+        when (enable & 
+              ((accessCfg & ~lockMask(counter(1 downto 0))) | 
+               (accessAddr & ~cfgRegion(counter)(lBit)))) {
           boundLo(counter) := setter.io.boundLo
           boundHi(counter) := setter.io.boundHi
         }
@@ -306,7 +278,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
     }
 
     pipeline plug new Area {
-      def getMatches(address : UInt) = {
+      def getHits(address : UInt) = {
         (0 until regions).map(i =>
             address >= boundLo(U(i, log2Up(regions) bits)) & 
             address < boundHi(U(i, log2Up(regions) bits)) &
@@ -325,13 +297,13 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         dPort.bus.rsp.allowExecute := False
         dPort.bus.busy := False
 
-        val matches = getMatches(address(31 downto 2))
+        val hits = getHits(address(31 downto 2))
 
-        when(~matches.orR) {
+        when(~hits.orR) {
           dPort.bus.rsp.allowRead := privilegeService.isMachine()
           dPort.bus.rsp.allowWrite := privilegeService.isMachine()
         } otherwise {
-          val oneHot = OHMasking.first(matches)
+          val oneHot = OHMasking.first(hits)
           dPort.bus.rsp.allowRead := MuxOH(oneHot, cfgRegion.map(cfg => cfg(rBit)))
           dPort.bus.rsp.allowWrite := MuxOH(oneHot, cfgRegion.map(cfg => cfg(wBit)))
         }
@@ -348,12 +320,12 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         iPort.bus.rsp.allowWrite := False
         iPort.bus.busy := False
 
-        val matches = getMatches(address(31 downto 2))
+        val hits = getHits(address(31 downto 2))
 
-        when(~matches.orR) {
+        when(~hits.orR) {
           iPort.bus.rsp.allowExecute := privilegeService.isMachine()
         } otherwise {
-          val oneHot = OHMasking.first(matches)
+          val oneHot = OHMasking.first(hits)
           iPort.bus.rsp.allowExecute := MuxOH(oneHot, cfgRegion.map(cfg => cfg(xBit)))
         }
       }
