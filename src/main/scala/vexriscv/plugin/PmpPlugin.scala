@@ -114,7 +114,6 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
   assert(regions <= 16)
 
   var setter : PmpSetter = null
-  //val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
   var dPort, iPort : ProtectedMemoryTranslatorPort = null
   
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
@@ -153,8 +152,8 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       val accessCfg = input(PMP_CFG_ACCESS)
       val pmpWrite = arbitration.isValid && input(IS_CSR) && input(CSR_WRITE_OPCODE) & (accessAddr | accessCfg)
       val pmpRead = arbitration.isValid && input(IS_CSR) && input(CSR_READ_OPCODE) & (accessAddr | accessCfg)
-      val pmpIndex = csrAddress(3 downto 0).asUInt
-      val pmpSelect = pmpIndex(1 downto 0)
+      val pmpIndex = csrAddress(log2Up(regions) - 1 downto 0).asUInt
+      val pmpSelect = pmpIndex(log2Up(regions) - 3 downto 0)
 
       val readAddr = pmpaddr.readAsync(pmpIndex).asBits
       val readCfg = cfgRegister(pmpSelect)
@@ -227,7 +226,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         }
 
         val stateCfg : State = new State {
-          onEntry (counter := pmpIndex(1 downto 0) @@ U"2'00")
+          onEntry (counter := pmpIndex(log2Up(regions) - 3 downto 0) @@ U"2'00")
           whenIsActive {
             counter := counter + 1
             when (counter(1 downto 0) === 3) {
