@@ -8,10 +8,10 @@ package vexriscv.plugin
 
 import vexriscv.{VexRiscv, _}
 import vexriscv.plugin.CsrPlugin.{_}
+import vexriscv.plugin.MemoryTranslatorPort.{_}
 import spinal.core._
 import spinal.lib._
 import spinal.lib.fsm._
-import scala.collection.mutable.ArrayBuffer
 
 /* Each 32-bit pmpcfg# register contains four 8-bit configuration sections.
  * These section numbers contain flags which apply to regions defined by the
@@ -114,11 +114,15 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
   assert(regions <= 16)
 
   var setter : PmpSetter = null
-  val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+  //val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
+  var dPort, iPort : ProtectedMemoryTranslatorPort = null
   
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
-    ports += port
+    priority match {
+      case PRIORITY_INSTRUCTION => iPort = port
+      case PRIORITY_DATA => dPort = port
+    }
     port.bus
   }
 
@@ -302,34 +306,55 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
     }
 
     pipeline plug new Area {
-      for (port <- ports) yield new Area {
-        val address = port.bus.cmd(0).virtualAddress
-        port.bus.rsp.physicalAddress := address
-        port.bus.rsp.isIoAccess := ioRange(address)
-        port.bus.rsp.isPaging := False
-        port.bus.rsp.exception := False
-        port.bus.rsp.refilling := False
-        port.bus.busy := False
-
-        val isMachine = privilegeService.isMachine()
-        val comparand = address(31 downto 2)
-
-        val matches = (0 until regions).map(i =>
-            comparand >= boundLo(U(i, log2Up(regions) bits)) & 
-            comparand < boundHi(U(i, log2Up(regions) bits)) &
-            (cfgRegion(i)(lBit) | ~isMachine) & 
+      def getMatches(address : UInt) = {
+        (0 until regions).map(i =>
+            address >= boundLo(U(i, log2Up(regions) bits)) & 
+            address < boundHi(U(i, log2Up(regions) bits)) &
+            (cfgRegion(i)(lBit) | ~privilegeService.isMachine()) & 
             cfgRegion(i)(aBits) =/= 0
         )
-        
+      }
+
+      val dGuard = new Area {
+        val address = dPort.bus.cmd(0).virtualAddress
+        dPort.bus.rsp.physicalAddress := address
+        dPort.bus.rsp.isIoAccess := ioRange(address)
+        dPort.bus.rsp.isPaging := False
+        dPort.bus.rsp.exception := False
+        dPort.bus.rsp.refilling := False
+        dPort.bus.rsp.allowExecute := False
+        dPort.bus.busy := False
+
+        val matches = getMatches(address(31 downto 2))
+
         when(~matches.orR) {
-          port.bus.rsp.allowRead := isMachine
-          port.bus.rsp.allowWrite := isMachine
-          port.bus.rsp.allowExecute := isMachine
+          dPort.bus.rsp.allowRead := privilegeService.isMachine()
+          dPort.bus.rsp.allowWrite := privilegeService.isMachine()
         } otherwise {
           val oneHot = OHMasking.first(matches)
-          port.bus.rsp.allowRead := MuxOH(oneHot, cfgRegion.map(cfg => cfg(rBit)))
-          port.bus.rsp.allowWrite := MuxOH(oneHot, cfgRegion.map(cfg => cfg(wBit)))
-          port.bus.rsp.allowExecute := MuxOH(oneHot, cfgRegion.map(cfg => cfg(xBit)))
+          dPort.bus.rsp.allowRead := MuxOH(oneHot, cfgRegion.map(cfg => cfg(rBit)))
+          dPort.bus.rsp.allowWrite := MuxOH(oneHot, cfgRegion.map(cfg => cfg(wBit)))
+        }
+      }
+
+      val iGuard = new Area {
+        val address = iPort.bus.cmd(0).virtualAddress
+        iPort.bus.rsp.physicalAddress := address
+        iPort.bus.rsp.isIoAccess := ioRange(address)
+        iPort.bus.rsp.isPaging := False
+        iPort.bus.rsp.exception := False
+        iPort.bus.rsp.refilling := False
+        iPort.bus.rsp.allowRead := False
+        iPort.bus.rsp.allowWrite := False
+        iPort.bus.busy := False
+
+        val matches = getMatches(address(31 downto 2))
+
+        when(~matches.orR) {
+          iPort.bus.rsp.allowExecute := privilegeService.isMachine()
+        } otherwise {
+          val oneHot = OHMasking.first(matches)
+          iPort.bus.rsp.allowExecute := MuxOH(oneHot, cfgRegion.map(cfg => cfg(xBit)))
         }
       }
     }

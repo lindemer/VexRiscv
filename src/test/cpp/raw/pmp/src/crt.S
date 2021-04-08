@@ -8,13 +8,13 @@
 #define TRAP_RA    x30
 
 #define PMPCFG0    0x07120000
-#define PMPCFG0_   0x07920808 // locked
+#define PMPCFG0_   0x07920808
 #define PMPCFG1    0x191f0304
-#define PMPCFG2    0x000f0506
+#define PMPCFG2    0x000f090a
 #define PMPCFG3    0x0f1e1900
 
-#define PMPADDR0   0x20000000 // OFF
-#define PMPADDR1   0xffffffff // OFF
+#define PMPADDR0   0x20000000 // OFF (test0) -> TOR (test1) -> OFF (test2)
+#define PMPADDR1   0xffffffff // OFF (test0) -> TOR (test1) -> OFF (test2)
 #define PMPADDR2   0x20002000 // NA4    W
 #define PMPADDR3   0x20003fff // OFF   RWX
 #define PMPADDR4   0x20003fff // OFF     X
@@ -165,6 +165,7 @@ test4:
 // attempt to read/write other regions from user mode
 test5:
     li TEST_ID, 5
+    la TRAP_RA, fail
     li x2, 0xdeadbeef
     li x1, 0x80000000
     sw x2, 0x0(x1)
@@ -173,10 +174,11 @@ test5:
 
 test6:
     li TEST_ID, 6
-    li x1, 0x80010000
-    lw x3, 0x0(x1)              // should be OK (read 0x80010000)
+    la TRAP_RA, fail
+    li x1, 0x80040000
+    lw x3, 0x0(x1)              // should be OK (read 0x80040000)
     la TRAP_RA, pass
-    sw x3, 0x0(x1)              // should fault (write 0x80010000)
+    sw x3, 0x0(x1)              // should fault (write 0x80040000)
     j fail
     
 test7:
@@ -191,6 +193,7 @@ test7:
 
 test8:
     li TEST_ID, 8
+    la TRAP_RA, fail
     li x1, 0x8003fff8
     lw x3, 0x0(x1)              // should be OK (read 0x8003fff8)
     la TRAP_RA, pass
