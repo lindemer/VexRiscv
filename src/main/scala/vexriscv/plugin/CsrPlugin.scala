@@ -32,6 +32,14 @@ object CsrAccess {
   object NONE extends CsrAccess
 }
 
+object CsrPlugin {
+  object IS_CSR extends Stageable(Bool)
+  object CSR_WRITE_OPCODE extends Stageable(Bool)
+  object CSR_READ_OPCODE extends Stageable(Bool)
+  object PMP_CFG_ACCESS extends Stageable(Bool)
+  object PMP_ADDR_ACCESS extends Stageable(Bool)
+}
+
 case class ExceptionPortInfo(port : Flow[ExceptionCause],stage : Stage, priority : Int)
 case class CsrPluginConfig(
                             catchIllegalAccess  : Boolean,
@@ -399,6 +407,7 @@ trait IWake{
 class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with ExceptionService with PrivilegeService with InterruptionInhibitor with ExceptionInhibitor with IContextSwitching with CsrInterface with IWake{
   import config._
   import CsrAccess._
+  import CsrPlugin._
 
   assert(!(wfiGenAsNop && wfiGenAsWait))
 
@@ -440,9 +449,6 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
   }
 
   object ENV_CTRL extends Stageable(EnvCtrlEnum())
-  object IS_CSR extends Stageable(Bool)
-  object CSR_WRITE_OPCODE extends Stageable(Bool)
-  object CSR_READ_OPCODE extends Stageable(Bool)
   object PIPELINED_CSR_READ extends Stageable(Bits(32 bits))
 
   var allowInterrupts : Bool = null
@@ -1024,11 +1030,18 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
         import decode._
 
         val imm = IMM(input(INSTRUCTION))
-        insert(CSR_WRITE_OPCODE) := ! (
+        val write = ! (
              (input(INSTRUCTION)(14 downto 13) === B"01" && input(INSTRUCTION)(rs1Range) === 0)
           || (input(INSTRUCTION)(14 downto 13) === B"11" && imm.z === 0)
         )
-        insert(CSR_READ_OPCODE) := input(INSTRUCTION)(13 downto 7) =/= B"0100000"
+        val read = input(INSTRUCTION)(13 downto 7) =/= B"0100000"
+        insert(CSR_WRITE_OPCODE) := write
+        insert(CSR_READ_OPCODE) := read
+
+        if (pipeline.serviceExist(classOf[PmpPlugin])) {
+          insert(PMP_CFG_ACCESS) := input(INSTRUCTION)(31 downto 24) === 0x3a
+          insert(PMP_ADDR_ACCESS) := input(INSTRUCTION)(31 downto 24) === 0x3b
+        }
       }
 
       execute plug new Area{
@@ -1103,9 +1116,8 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
         )
 
         val csrAddress = input(INSTRUCTION)(csrRange)
-        val pmpEnabled = pipeline.serviceExist(classOf[PmpPlugin])
-        val pmpAccess = if (pmpEnabled) {
-          (csrAddress(11 downto 4) === 0x3a | csrAddress(11 downto 4) === 0x3b) 
+        val pmpAccess = if (pipeline.serviceExist(classOf[PmpPlugin])) {
+          input(PMP_CFG_ACCESS) | input(PMP_ADDR_ACCESS)
         } else False
 
         when (~pmpAccess) {

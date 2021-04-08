@@ -7,6 +7,7 @@
 package vexriscv.plugin
 
 import vexriscv.{VexRiscv, _}
+import vexriscv.plugin.CsrPlugin.{_}
 import spinal.core._
 import spinal.lib._
 import spinal.lib.fsm._
@@ -115,12 +116,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
 
   var setter : PmpSetter = null
   val ports = ArrayBuffer[ProtectedMemoryTranslatorPort]()
-
-  // FIXME (don't copy from CSR plugin)
-  object IS_CSR_ extends Stageable(Bool)
-  object CSR_WRITE_OPCODE_ extends Stageable(Bool)
-  object CSR_READ_OPCODE_ extends Stageable(Bool)
-
+  
   override def newTranslationPort(priority : Int, args : Any): MemoryTranslatorBus = {
     val port = ProtectedMemoryTranslatorPort(MemoryTranslatorBus(new MemoryTranslatorBusParameter(0, 0)))
     ports += port
@@ -128,20 +124,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
   }
 
   override def setup(pipeline: VexRiscv): Unit = {
-   import vexriscv.Riscv._
     setter = new PmpSetter()
-
-    // FIXME
-    val decoderService = pipeline.service(classOf[DecoderService])
-    decoderService.addDefault(IS_CSR_, False)
-    decoderService.add(List(
-      CSRRW  -> List[(Stageable[_ <: BaseType],Any)](IS_CSR_ -> True),
-      CSRRS  -> List[(Stageable[_ <: BaseType],Any)](IS_CSR_ -> True),
-      CSRRC  -> List[(Stageable[_ <: BaseType],Any)](IS_CSR_ -> True),
-      CSRRWI -> List[(Stageable[_ <: BaseType],Any)](IS_CSR_ -> True),
-      CSRRSI -> List[(Stageable[_ <: BaseType],Any)](IS_CSR_ -> True),
-      CSRRCI -> List[(Stageable[_ <: BaseType],Any)](IS_CSR_ -> True)
-    ))
   }
 
   override def build(pipeline: VexRiscv): Unit = {
@@ -157,22 +140,12 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
     val boundLo, boundHi = Mem(UInt(30 bits), regions)
     val cfgRegion = pmpcfg.subdivideIn(8 bits)
     val cfgRegister = pmpcfg.subdivideIn(xlen bits)
-
-    // FIXME
-    decode plug new Area {
-      import decode._
-      val imm = IMM(input(INSTRUCTION))
-      insert(CSR_WRITE_OPCODE_) := ! (
-            (input(INSTRUCTION)(14 downto 13) === B"01" && input(INSTRUCTION)(rs1Range) === 0)
-         || (input(INSTRUCTION)(14 downto 13) === B"11" && imm.z === 0)
-      )
-      insert(CSR_READ_OPCODE_) := input(INSTRUCTION)(13 downto 7) =/= B"0100000"
-    }
+    val lockMask = Reg(Bits(4 bits)) init(B"4'0")
 
     execute plug new Area {
       import execute._
 
-      // TODO: remove
+      // For debugging purposes.
       val pmpcfg_ = pmpcfg
       val boundLo0 = boundLo(U"4'x0")
       val boundHi0 = boundHi(U"4'x0")
@@ -206,44 +179,38 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       val boundHi14 = boundHi(U"4'xe")
       val boundLo15 = boundLo(U"4'xf")
       val boundHi15 = boundHi(U"4'xf")
+      val lockMask_ = lockMask
 
-      // copied from CSR plugin
       val csrAddress = input(INSTRUCTION)(csrRange)
-      val addrAccess = csrAddress(11 downto 4) === 0x3b
-      val cfgAccess = csrAddress(11 downto 4) === 0x3a
-      val pmpWrite = arbitration.isValid && input(IS_CSR_) && input(CSR_WRITE_OPCODE_) & (addrAccess | cfgAccess)
-      val pmpRead = arbitration.isValid && input(IS_CSR_) && input(CSR_READ_OPCODE_) & (addrAccess | cfgAccess)
-      val writeEnable = pmpWrite & !arbitration.isStuck
-      val readEnable = pmpRead & !arbitration.isStuck
-
-      // TODO: support masked CSR operations
-      val inputPayload = input(SRC1)
-      val inputIndex = csrAddress(3 downto 0).asUInt
-
-      val cfgSelect = inputIndex(1 downto 0)
-      val pmpcfgN = cfgRegister(cfgSelect)
+      val accessAddr = input(PMP_ADDR_ACCESS)
+      val accessCfg = input(PMP_CFG_ACCESS)
+      val pmpWrite = arbitration.isValid && input(IS_CSR) && input(CSR_WRITE_OPCODE) & (accessAddr | accessCfg)
+      val pmpRead = arbitration.isValid && input(IS_CSR) && input(CSR_READ_OPCODE) & (accessAddr | accessCfg)
+      val pmpIndex = csrAddress(3 downto 0).asUInt
+      val pmpSelect = pmpIndex(1 downto 0)
+      val pmpcfgN = cfgRegister(pmpSelect)
       val pmpNcfg = pmpcfgN.subdivideIn(8 bits)
 
-      // TODO: break this down into a "reader" and a "writer"
-      // cfg writes need to happen after the re-configuration somehow
-      // or, create a "recompute" mask for the fsm to use
-      val csr = new Area {
-        when (pmpRead | pmpWrite) {
-          when (cfgAccess) {
-            when (writeEnable) {
-              switch(cfgSelect) {
-                for (i <- 0 until (regions / 4)) {
-                  is(i) {
-                    for (j <- Range(0, xlen, 8)) {
-                      val bitRange = j + xlen * i + lBit downto j + xlen * i
-                      val overwrite = inputPayload.subdivideIn(8 bits)(j / 8)
-                      val locked = cfgRegister(i).subdivideIn(8 bits)(j / 8)(lBit)
-                      when (~locked) {
-                        pmpcfg(bitRange).assignFromBits(overwrite)
-                        if (j != 0 || i != 0) {
-                          when (overwrite(lBit) & overwrite(aBits) === TOR) {
-                            pmpcfg(j + xlen * i - 1) := True
-                          }
+      // TODO: support masked/immediate CSR operations
+      val inputPayload = input(SRC1)
+      
+      val writer = new Area {
+        when (input(PMP_CFG_ACCESS)) {
+          output(REGFILE_WRITE_DATA).assignFromBits(pmpcfgN)
+          when (pmpWrite) {
+            switch(pmpSelect) {
+              for (i <- 0 until (regions / 4)) {
+                is(i) {
+                  for (j <- Range(0, xlen, 8)) {
+                    val bitRange = j + xlen * i + lBit downto j + xlen * i
+                    val overwrite = inputPayload.subdivideIn(8 bits)(j / 8)
+                    val locked = cfgRegister(i).subdivideIn(8 bits)(j / 8)(lBit)
+                    lockMask(j / 8) := locked
+                    when (~locked) {
+                      pmpcfg(bitRange).assignFromBits(overwrite)
+                      if (j != 0 || i != 0) {
+                        when (overwrite(lBit) & overwrite(aBits) === TOR) {
+                          pmpcfg(j + xlen * i - 1) := True
                         }
                       }
                     }
@@ -251,27 +218,23 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
                 }
               }
             }
-            output(REGFILE_WRITE_DATA).assignFromBits(pmpcfgN)
-          } otherwise {
-            when (writeEnable) {
-              val lock = pmpNcfg(inputIndex(1 downto 0))(lBit)
-              pmpaddr.write(
-                inputIndex,
-                inputPayload.asUInt,
-                writeEnable & ~cfgAccess & ~lock
-              )
-            }
-            output(REGFILE_WRITE_DATA) := pmpaddr.readAsync(inputIndex).asBits
+          }
+        }.elsewhen (input(PMP_ADDR_ACCESS)) {
+          output(REGFILE_WRITE_DATA) := pmpaddr.readAsync(pmpIndex).asBits
+          when (pmpWrite) {
+            val locked = pmpNcfg(pmpIndex(1 downto 0))(lBit)
+            pmpaddr.write(pmpIndex, inputPayload.asUInt, ~locked)
           }
         }
       }
             
-      val fsm = new StateMachine {
+      val controller = new StateMachine {
         val counter = Reg(UInt(log2Up(regions) bits)) init(0)
         val enable = RegInit(False)
 
-        val idleState : State = new State with EntryPoint {
+        val stateIdle : State = new State with EntryPoint {
           onEntry {
+            lockMask := B"4'x0"
             enable := False
             counter := 0
           }
@@ -281,45 +244,45 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
           }
           whenIsActive {
             when (pmpWrite) {
-              when (cfgAccess) {
-                counter := inputIndex(1 downto 0) @@ U"2'00"
-                goto(cfgState)
-              } otherwise {
-                counter := inputIndex
-                goto(addrState)
+              when (accessCfg) {
+                goto(stateCfg)
+              }.elsewhen (accessAddr) {
+                goto(stateAddr)
               }
             }
           }
         }
 
-        val cfgState : State = new State {
-          whenIsActive{
+        val stateCfg : State = new State {
+          onEntry (counter := pmpIndex(1 downto 0) @@ U"2'00")
+          whenIsActive {
             counter := counter + 1
             when (counter(1 downto 0) === 3) {
-              goto(idleState)
+              goto(stateIdle)
             } otherwise {
               arbitration.haltItself := True
             }
           }
         }
 
-        val addrState : State = new State {
-          whenIsActive{
+        val stateAddr : State = new State {
+          onEntry (counter := pmpIndex)
+          whenIsActive {
             counter := counter + 1
-            when (counter === (inputIndex + 1) | counter === 0) {
-              goto(idleState)
+            when (counter === (pmpIndex + 1) | counter === 0) {
+              goto(stateIdle)
             } otherwise {
               arbitration.haltItself := True
             }
           }
         }
 
-        when (cfgAccess) {
+        when (accessCfg) {
           setter.io.a := inputPayload.subdivideIn(8 bits)(counter(1 downto 0))(aBits)
           setter.io.addr := pmpaddr(counter) 
         } otherwise {
           setter.io.a := cfgRegion(counter)(aBits)
-          when (counter === inputIndex) {
+          when (counter === pmpIndex) {
             setter.io.addr := inputPayload.asUInt
           } otherwise {
             setter.io.addr := pmpaddr(counter)
@@ -331,13 +294,11 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         } otherwise {
           setter.io.prevHi := boundHi(counter - 1)
         }
-        // TODO: What if you lock the region and change the config in the same op?
-        // Right now, you have to write the configuration once and then lock it in a second inst
-        when (enable & ~cfgRegion(counter)(lBit)) {
+        
+        when (enable & ~lockMask(counter(1 downto 0))) {
           boundLo(counter) := setter.io.boundLo
           boundHi(counter) := setter.io.boundHi
         }
-
       }
     }
 
