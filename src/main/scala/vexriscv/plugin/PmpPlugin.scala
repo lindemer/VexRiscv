@@ -9,6 +9,7 @@ package vexriscv.plugin
 import vexriscv.{VexRiscv, _}
 import spinal.core._
 import spinal.lib._
+import spinal.lib.fsm._
 import scala.collection.mutable.ArrayBuffer
 
 /* Each 32-bit pmpcfg# register contains four 8-bit configuration sections.
@@ -216,27 +217,26 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       val readEnable = pmpRead & !arbitration.isStuck
 
       // TODO: support masked CSR operations
-      val ioWritePayload = input(SRC1)
+      val inputPayload = input(SRC1)
+      val inputIndex = csrAddress(3 downto 0).asUInt
 
-      // TODO: rename
-      val ioIndex = csrAddress(3 downto 0).asUInt
-      val ioConfig = cfgAccess
-      val ioWriteValid = writeEnable
-
-      val cfgSelect = ioIndex(1 downto 0)
+      val cfgSelect = inputIndex(1 downto 0)
       val pmpcfgN = cfgRegister(cfgSelect)
       val pmpNcfg = pmpcfgN.subdivideIn(8 bits)
-      
+
+      // TODO: break this down into a "reader" and a "writer"
+      // cfg writes need to happen after the re-configuration somehow
+      // or, create a "recompute" mask for the fsm to use
       val csr = new Area {
         when (pmpRead | pmpWrite) {
-          when (ioConfig) {
-            when (ioWriteValid) {
+          when (cfgAccess) {
+            when (writeEnable) {
               switch(cfgSelect) {
                 for (i <- 0 until (regions / 4)) {
                   is(i) {
                     for (j <- Range(0, xlen, 8)) {
                       val bitRange = j + xlen * i + lBit downto j + xlen * i
-                      val overwrite = ioWritePayload.subdivideIn(8 bits)(j / 8)
+                      val overwrite = inputPayload.subdivideIn(8 bits)(j / 8)
                       val locked = cfgRegister(i).subdivideIn(8 bits)(j / 8)(lBit)
                       when (~locked) {
                         pmpcfg(bitRange).assignFromBits(overwrite)
@@ -253,81 +253,92 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
             }
             output(REGFILE_WRITE_DATA).assignFromBits(pmpcfgN)
           } otherwise {
-            when (ioWriteValid) {
-              val lock = pmpNcfg(ioIndex(1 downto 0))(lBit)
+            when (writeEnable) {
+              val lock = pmpNcfg(inputIndex(1 downto 0))(lBit)
               pmpaddr.write(
-                ioIndex,
-                ioWritePayload.asUInt,
-                ioWriteValid & ~ioConfig & ~lock
+                inputIndex,
+                inputPayload.asUInt,
+                writeEnable & ~cfgAccess & ~lock
               )
             }
-            output(REGFILE_WRITE_DATA) := pmpaddr.readAsync(ioIndex).asBits
+            output(REGFILE_WRITE_DATA) := pmpaddr.readAsync(inputIndex).asBits
           }
         }
       }
-      
-      val controller = new Area {
-        val enable = RegInit(False)
+            
+      val fsm = new StateMachine {
         val counter = Reg(UInt(log2Up(regions) bits)) init(0)
-        val setNext = RegInit(False)
-        
-        when (pmpWrite | enable) {
-          when (ioConfig) {
-            when (~enable) {
-              enable := True
-              arbitration.haltItself := True
-              counter := ioIndex(1 downto 0) @@ U"2'00"
-            } otherwise {
-              counter := counter + 1
-              when (counter(1 downto 0) === 3) {
-                enable := False
+        val enable = RegInit(False)
+
+        val idleState : State = new State with EntryPoint {
+          onEntry {
+            enable := False
+            counter := 0
+          }
+          onExit {
+            enable := True
+            arbitration.haltItself := True
+          }
+          whenIsActive {
+            when (pmpWrite) {
+              when (cfgAccess) {
+                counter := inputIndex(1 downto 0) @@ U"2'00"
+                goto(cfgState)
               } otherwise {
-                arbitration.haltItself := True
+                counter := inputIndex
+                goto(addrState)
               }
-            }
-          } otherwise {
-            when (~enable) {
-              enable := True
-              counter := ioIndex
-              arbitration.haltItself := True
-              when (ioIndex =/= (regions - 1)) {
-                setNext := True
-              } otherwise {
-                setNext := False
-              }
-            }.elsewhen (setNext) {
-              arbitration.haltItself := True
-              counter := counter + 1
-              setNext := False
-            } otherwise {
-              enable := False
             }
           }
         }
 
-        when (ioConfig) {
-          setter.io.a := ioWritePayload.subdivideIn(8 bits)(counter(1 downto 0))(aBits)
-          setter.io.addr := pmpaddr(counter)
+        val cfgState : State = new State {
+          whenIsActive{
+            counter := counter + 1
+            when (counter(1 downto 0) === 3) {
+              goto(idleState)
+            } otherwise {
+              arbitration.haltItself := True
+            }
+          }
+        }
+
+        val addrState : State = new State {
+          whenIsActive{
+            counter := counter + 1
+            when (counter === (inputIndex + 1) | counter === 0) {
+              goto(idleState)
+            } otherwise {
+              arbitration.haltItself := True
+            }
+          }
+        }
+
+        when (cfgAccess) {
+          setter.io.a := inputPayload.subdivideIn(8 bits)(counter(1 downto 0))(aBits)
+          setter.io.addr := pmpaddr(counter) 
         } otherwise {
           setter.io.a := cfgRegion(counter)(aBits)
-          when (setNext) {
-            setter.io.addr := ioWritePayload.asUInt
+          when (counter === inputIndex) {
+            setter.io.addr := inputPayload.asUInt
           } otherwise {
             setter.io.addr := pmpaddr(counter)
           }
         }
-
+        
         when (counter === 0) {
           setter.io.prevHi := 0
         } otherwise {
           setter.io.prevHi := boundHi(counter - 1)
         }
+        // TODO: What if you lock the region and change the config in the same op?
+        // Right now, you have to write the configuration once and then lock it in a second inst
         when (enable & ~cfgRegion(counter)(lBit)) {
           boundLo(counter) := setter.io.boundLo
           boundHi(counter) := setter.io.boundHi
         }
+
       }
-    
     }
 
     pipeline plug new Area {
@@ -346,15 +357,15 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.allowRead := machine
         port.bus.rsp.allowWrite := machine
         port.bus.rsp.allowExecute := machine
-        
+
         for (i <- regions - 1 to 0 by -1) {
-          when (floor >= boundLo(U(i, log2Up(regions) bits)) & floor < boundHi(U(i, log2Up(regions) bits))) {
-            port.bus.rsp.isPaging := True
-            when ((cfgRegion(i)(lBit) | ~machine) & cfgRegion(i)(aBits) =/= 0) {
-              port.bus.rsp.allowRead := cfgRegion(i)(rBit)
-              port.bus.rsp.allowWrite := cfgRegion(i)(wBit)
-              port.bus.rsp.allowExecute := cfgRegion(i)(xBit)
-            }
+          when (floor >= boundLo(U(i, log2Up(regions) bits)) & 
+                floor < boundHi(U(i, log2Up(regions) bits)) &
+                (cfgRegion(i)(lBit) | ~machine) & 
+                cfgRegion(i)(aBits) =/= 0) {
+            port.bus.rsp.allowRead := cfgRegion(i)(rBit)
+            port.bus.rsp.allowWrite := cfgRegion(i)(wBit)
+            port.bus.rsp.allowExecute := cfgRegion(i)(xBit)
           }
         }
       }
