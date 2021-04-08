@@ -110,7 +110,6 @@ class PmpSetter() extends Component with Pmp {
 case class ProtectedMemoryTranslatorPort(bus : MemoryTranslatorBus)
 
 class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] with MemoryTranslator with Pmp {
-
   assert(regions % 4 == 0)
   assert(regions <= 16)
 
@@ -195,7 +194,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       val inputPayload = input(SRC1)
       
       val writer = new Area {
-        when (input(PMP_CFG_ACCESS)) {
+        when (accessCfg) {
           output(REGFILE_WRITE_DATA).assignFromBits(pmpcfgN)
           when (pmpWrite) {
             switch(pmpSelect) {
@@ -219,7 +218,7 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
               }
             }
           }
-        }.elsewhen (input(PMP_ADDR_ACCESS)) {
+        }.elsewhen (accessAddr) {
           output(REGFILE_WRITE_DATA) := pmpaddr.readAsync(pmpIndex).asBits
           when (pmpWrite) {
             val locked = pmpNcfg(pmpIndex(1 downto 0))(lBit)
@@ -312,22 +311,25 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
         port.bus.rsp.refilling := False
         port.bus.busy := False
 
-        val machine = privilegeService.isMachine()
-        val floor = address(31 downto 2)
-        
-        port.bus.rsp.allowRead := machine
-        port.bus.rsp.allowWrite := machine
-        port.bus.rsp.allowExecute := machine
+        val isMachine = privilegeService.isMachine()
+        val comparand = address(31 downto 2)
 
-        for (i <- regions - 1 to 0 by -1) {
-          when (floor >= boundLo(U(i, log2Up(regions) bits)) & 
-                floor < boundHi(U(i, log2Up(regions) bits)) &
-                (cfgRegion(i)(lBit) | ~machine) & 
-                cfgRegion(i)(aBits) =/= 0) {
-            port.bus.rsp.allowRead := cfgRegion(i)(rBit)
-            port.bus.rsp.allowWrite := cfgRegion(i)(wBit)
-            port.bus.rsp.allowExecute := cfgRegion(i)(xBit)
-          }
+        val matches = (0 until regions).map(i =>
+            comparand >= boundLo(U(i, log2Up(regions) bits)) & 
+            comparand < boundHi(U(i, log2Up(regions) bits)) &
+            (cfgRegion(i)(lBit) | ~isMachine) & 
+            cfgRegion(i)(aBits) =/= 0
+        )
+        
+        when(~matches.orR) {
+          port.bus.rsp.allowRead := isMachine
+          port.bus.rsp.allowWrite := isMachine
+          port.bus.rsp.allowExecute := isMachine
+        } otherwise {
+          val oneHot = OHMasking.first(matches)
+          port.bus.rsp.allowRead := MuxOH(oneHot, cfgRegion.map(cfg => cfg(rBit)))
+          port.bus.rsp.allowWrite := MuxOH(oneHot, cfgRegion.map(cfg => cfg(wBit)))
+          port.bus.rsp.allowExecute := MuxOH(oneHot, cfgRegion.map(cfg => cfg(xBit)))
         }
       }
     }
