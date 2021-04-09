@@ -36,8 +36,8 @@ object CsrPlugin {
   object IS_CSR extends Stageable(Bool)
   object CSR_WRITE_OPCODE extends Stageable(Bool)
   object CSR_READ_OPCODE extends Stageable(Bool)
-  object PMP_CFG_ACCESS extends Stageable(Bool)
-  object PMP_ADDR_ACCESS extends Stageable(Bool)
+  object IS_PMP_CFG extends Stageable(Bool)
+  object IS_PMP_ADDR extends Stageable(Bool)
 }
 
 case class ExceptionPortInfo(port : Flow[ExceptionCause],stage : Stage, priority : Int)
@@ -1039,8 +1039,8 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
         insert(CSR_READ_OPCODE) := read
 
         if (pipeline.serviceExist(classOf[PmpPlugin])) {
-          insert(PMP_CFG_ACCESS) := input(INSTRUCTION)(31 downto 24) === 0x3a
-          insert(PMP_ADDR_ACCESS) := input(INSTRUCTION)(31 downto 24) === 0x3b
+          insert(IS_PMP_CFG) := input(INSTRUCTION)(31 downto 24) === 0x3a
+          insert(IS_PMP_ADDR) := input(INSTRUCTION)(31 downto 24) === 0x3b
         }
       }
 
@@ -1117,7 +1117,7 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
 
         val csrAddress = input(INSTRUCTION)(csrRange)
         val pmpAccess = if (pipeline.serviceExist(classOf[PmpPlugin])) {
-          input(PMP_CFG_ACCESS) | input(PMP_ADDR_ACCESS)
+          input(IS_PMP_CFG) | input(IS_PMP_ADDR)
         } else False
 
         when (~pmpAccess) {
@@ -1131,7 +1131,7 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
               memory.output(REGFILE_WRITE_DATA) := memory.input(PIPELINED_CSR_READ)
             }
           }
-        } otherwise {
+        }.elsewhen(arbitration.isValid && input(IS_CSR)) {
           illegalAccess := False
         }
 

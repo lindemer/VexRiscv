@@ -148,8 +148,8 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       import execute._
 
       val csrAddress = input(INSTRUCTION)(csrRange)
-      val accessAddr = input(PMP_ADDR_ACCESS)
-      val accessCfg = input(PMP_CFG_ACCESS)
+      val accessAddr = input(IS_PMP_ADDR)
+      val accessCfg = input(IS_PMP_CFG)
       val pmpWrite = arbitration.isValid && input(IS_CSR) && input(CSR_WRITE_OPCODE) & (accessAddr | accessCfg)
       val pmpRead = arbitration.isValid && input(IS_CSR) && input(CSR_READ_OPCODE) & (accessAddr | accessCfg)
       val pmpIndex = csrAddress(log2Up(regions) - 1 downto 0).asUInt
@@ -170,7 +170,9 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
       
       val writer = new Area {
         when (accessCfg) {
-          output(REGFILE_WRITE_DATA).assignFromBits(readCfg)
+          when (pmpRead) {
+            output(REGFILE_WRITE_DATA).assignFromBits(readCfg)
+          }
           when (pmpWrite) {
             switch(pmpSelect) {
               for (i <- 0 until (regions / 4)) {
@@ -194,12 +196,14 @@ class PmpPlugin(regions : Int, ioRange : UInt => Bool) extends Plugin[VexRiscv] 
             }
           }
         }.elsewhen (accessAddr) {
-          output(REGFILE_WRITE_DATA) := readAddr
-          val locked = cfgRegion(pmpIndex)(lBit)
-          pmpaddr.write(pmpIndex, writeData.asUInt, ~locked & pmpWrite)
+          when (pmpRead) {
+            output(REGFILE_WRITE_DATA) := readAddr
+          }
         }
+        val locked = cfgRegion(pmpIndex)(lBit)
+        pmpaddr.write(pmpIndex, writeData.asUInt, ~locked & pmpWrite & accessAddr)
       }
-            
+
       val controller = new StateMachine {
         val counter = Reg(UInt(log2Up(regions) bits)) init(0)
         val enable = RegInit(False)
