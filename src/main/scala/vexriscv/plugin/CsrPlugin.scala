@@ -38,6 +38,8 @@ object CsrPlugin {
   object CSR_READ_OPCODE extends Stageable(Bool)
   object IS_PMP_CFG extends Stageable(Bool)
   object IS_PMP_ADDR extends Stageable(Bool)
+  object IS_SPMP_CFG extends Stageable(Bool)
+  object IS_SPMP_ADDR extends Stageable(Bool)
 }
 
 case class ExceptionPortInfo(port : Flow[ExceptionCause],stage : Stage, priority : Int)
@@ -318,25 +320,34 @@ object CsrPluginConfig{
 
   def secure(mtvecInit : BigInt) = CsrPluginConfig(
     catchIllegalAccess = true,
-    mvendorid           = 1,
-    marchid             = 2,
-    mimpid              = 3,
-    mhartid             = 0,
-    misaExtensionsInit  = 0x101064, // RV32GCFMU
-    misaAccess          = CsrAccess.READ_WRITE,
+    mvendorid           = null,
+    marchid             = null,
+    mimpid              = null,
+    mhartid             = null,
+    misaExtensionsInit  = 0x0,
+    misaAccess          = CsrAccess.READ_ONLY,
     mtvecAccess         = CsrAccess.READ_WRITE,
     mtvecInit           = mtvecInit,
     mepcAccess          = CsrAccess.READ_WRITE,
     mscratchGen         = true,
-    mcauseAccess        = CsrAccess.READ_WRITE,
-    mbadaddrAccess      = CsrAccess.READ_WRITE,
-    mcycleAccess        = CsrAccess.READ_WRITE,
-    minstretAccess      = CsrAccess.READ_WRITE,
+    mcauseAccess        = CsrAccess.READ_ONLY,
+    mbadaddrAccess      = CsrAccess.READ_ONLY,
+    mcycleAccess        = CsrAccess.READ_ONLY,
+    minstretAccess      = CsrAccess.READ_ONLY,
     ucycleAccess        = CsrAccess.READ_ONLY,
     uinstretAccess      = CsrAccess.READ_ONLY,
     wfiGenAsWait        = true,
     ecallGen            = true,
     userGen             = true,
+    supervisorGen       = true,
+    sscratchGen         = true,
+    stvecAccess         = CsrAccess.READ_WRITE,
+    sepcAccess          = CsrAccess.READ_WRITE,
+    scauseAccess        = CsrAccess.READ_ONLY,
+    sbadaddrAccess      = CsrAccess.READ_ONLY,
+    scycleAccess        = CsrAccess.READ_ONLY,
+    sinstretAccess      = CsrAccess.READ_ONLY,
+    satpAccess          = CsrAccess.READ_WRITE,
     medelegAccess       = CsrAccess.READ_WRITE,
     midelegAccess       = CsrAccess.READ_WRITE
   )
@@ -1053,6 +1064,8 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
         if (pipeline.serviceExist(classOf[PmpPlugin])) {
           insert(IS_PMP_CFG) := input(INSTRUCTION)(31 downto 24) === 0x3a
           insert(IS_PMP_ADDR) := input(INSTRUCTION)(31 downto 24) === 0x3b
+          insert(IS_SPMP_CFG) := input(INSTRUCTION)(31 downto 24) === 0x90
+          insert(IS_SPMP_ADDR) := input(INSTRUCTION)(31 downto 24) === 0x91
         }
       }
 
@@ -1131,8 +1144,11 @@ class CsrPlugin(val config: CsrPluginConfig) extends Plugin[VexRiscv] with Excep
         val pmpAccess = if (pipeline.serviceExist(classOf[PmpPlugin])) {
           input(IS_PMP_CFG) | input(IS_PMP_ADDR)
         } else False
+        val sPmpAccess = if (pipeline.serviceExist(classOf[PmpPlugin])) {
+          input(IS_SPMP_CFG) | input(IS_SPMP_ADDR)
+        } else False
 
-        when (~pmpAccess) {
+        when (~pmpAccess & ~sPmpAccess) {
           when(arbitration.isValid && input(IS_CSR)) {
             if(!pipelineCsrRead) output(REGFILE_WRITE_DATA) := readData
             arbitration.haltItself setWhen(blockedBySideEffects)
