@@ -4354,6 +4354,10 @@ int main(int argc, char **argv, char **env) {
 			redo(REDO,WorkspaceRegression("pmp").loadHex(string(REGRESSION_PATH) + "../raw/pmp/build/pmp.hex")->bootAt(0x80000000u)->run(10e3););
 		#endif
 
+		#ifdef MPU
+			redo(REDO,WorkspaceRegression("mpu").loadHex(string(REGRESSION_PATH) + "../raw/mpu/build/mpu.hex")->bootAt(0x80000000u)->run(10e3););
+		#endif
+		
 		#ifdef AMO
 			redo(REDO,WorkspaceRegression("amo").withRiscvRef()->loadHex(string(REGRESSION_PATH) + "../raw/amo/build/amo.hex")->bootAt(0x00000000u)->run(10e3););
 		#endif

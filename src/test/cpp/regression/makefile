@@ -24,6 +24,7 @@ MMU?=yes
 DBUS_EXCLUSIVE?=no
 DBUS_INVALIDATE?=no
 PMP?=no
+MPU?=no
 SEED?=no
 LRSC?=no
 AMO?=no
@@ -271,6 +272,10 @@ endif
 
 ifeq ($(PMP),yes)
 	ADDCFLAGS += -CFLAGS -DPMP
+endif
+
+ifeq ($(MPU),yes)
+	ADDCFLAGS += -CFLAGS -DMPU
 endif
 
 ifeq ($(MUL),yes)
