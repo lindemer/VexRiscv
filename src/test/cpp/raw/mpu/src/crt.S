@@ -213,36 +213,22 @@ test2:
     li TEST_ID, 2
     la MEPC, fail
 
-    // attempt permitted writes to locked MPU regions
-    la SEPC, fail
-    li x6, 0x88000000
-    sw x7, 0x28(x6)
-    sw x7, 0x2c(x6)
-    sw x7, 0x38(x6)
-    sw x7, 0x3c(x6)
-
-    // attempt write to restricted locked MPU region
+    // attempt write to locked MPU region
     la SEPC, test3
     li SCAUSE, STORE_PAGE
-    sw x7, 0x30(x6)
+    li x6, 0x88028000
+    sw x7, 0x00(x6)
     j fail
 
 test3:
     li TEST_ID, 3
     la MEPC, fail
 
-    // attempt permitted reads to locked MPU regions
-    la SEPC, fail
-    li x6, 0x88000000
-    lw x7, 0x24(x6)
-    lw x7, 0x2c(x6)
-    lw x7, 0x34(x6)
-    lw x7, 0x3c(x6)
-
-    // attempt read from restricted locked MPU region
+    // attempt read from locked MPU region
     la SEPC, test4
     li SCAUSE, LOAD_PAGE
-    lw x7, 0x20(x6)
+    li x6, 0x88024000
+    lw x7, 0x00(x6)
     j fail
 
 test4:
@@ -250,9 +236,9 @@ test4:
     la MEPC, fail
     la SEPC, test5
 
-    // attempt execution from restricted locked MPU region
+    // attempt execution from locked MPU region
     li SCAUSE, INST_PAGE
-    li x6, 0x88000020 
+    li x6, 0x88030000
     jr x6
     j fail
 
@@ -272,13 +258,36 @@ test6:
     li TEST_ID, 6
     la MEPC, fail
 
-    // attempt permitted writes to MPU regions
+    // attempt permitted reads and writes to MPU regions
     la SEPC, fail
-    li x6, 0x88000000
-    sw x7, 0x08(x6)
-    sw x7, 0x0c(x6)
-    sw x7, 0x18(x6)
-    sw x7, 0x1c(x6)
+    li x6, 0x88004000
+    lw x7, 0x00(x6)
+    li x6, 0x88008000
+    sw x7, 0x00(x6)
+    li x6, 0x8800c000
+    lw x7, 0x00(x6)
+    sw x7, 0x00(x6)
+    li x6, 0x88014000
+    lw x7, 0x00(x6)
+    li x6, 0x88018000
+    sw x7, 0x00(x6)
+    li x6, 0x8801c000
+    lw x7, 0x00(x6)
+    sw x7, 0x00(x6)
+    li x6, 0x88024000
+    lw x7, 0x00(x6)
+    li x6, 0x88028000
+    sw x7, 0x00(x6)
+    li x6, 0x8802c000
+    lw x7, 0x00(x6)
+    sw x7, 0x00(x6)
+    li x6, 0x88034000
+    lw x7, 0x00(x6)
+    li x6, 0x88038000
+    sw x7, 0x00(x6)
+    li x6, 0x8803c000
+    lw x7, 0x00(x6)
+    sw x7, 0x00(x6)
 
     // attempt write to restricted MPU region
     la SEPC, test7
@@ -289,18 +298,11 @@ test6:
 test7:
     li TEST_ID, 7
     la MEPC, fail
-
-    // attempt permitted reads to MPU regions
-    la SEPC, fail
-    li x6, 0x88000000
-    lw x7, 0x04(x6)
-    lw x7, 0x0c(x6)
-    lw x7, 0x14(x6)
-    lw x7, 0x1c(x6)
-
+    
     // attempt read from restricted MPU region
     la SEPC, test8
     li SCAUSE, LOAD_PAGE
+    li x6, 0x88000000
     lw x7, 0x00(x6)
     j fail
     
