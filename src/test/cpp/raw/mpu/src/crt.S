@@ -50,22 +50,22 @@
 #define MPUCFG2   0x9b9a9998
 #define MPUCFG3   0x9f9e9d9c
 
-#define MPUADDR0  0x22000fff // NAPOT  
-#define MPUADDR1  0x22001fff // NAPOT  R
-#define MPUADDR2  0x22002fff // NAPOT   W
-#define MPUADDR3  0x22003fff // NAPOT  RW
-#define MPUADDR4  0x22004fff // NAPOT    X
-#define MPUADDR5  0x22005fff // NAPOT  R X
-#define MPUADDR6  0x22006fff // NAPOT   WX
-#define MPUADDR7  0x22007fff // NAPOT  RWX
-#define MPUADDR8  0x22008fff // NAPOT L
-#define MPUADDR9  0x22009fff // NAPOT LR
-#define MPUADDR10 0x2200afff // NAPOT L W
-#define MPUADDR11 0x2200bfff // NAPOT LRW
-#define MPUADDR12 0x2200cfff // NAPOT L  X
-#define MPUADDR13 0x2200dfff // NAPOT LR X
-#define MPUADDR14 0x2200efff // NAPOT L WX
-#define MPUADDR15 0x2200ffff // NAPOT LRWX
+#define MPUADDR0  0x220007ff // NAPOT  
+#define MPUADDR1  0x220017ff // NAPOT  R
+#define MPUADDR2  0x220027ff // NAPOT   W
+#define MPUADDR3  0x220037ff // NAPOT  RW
+#define MPUADDR4  0x220047ff // NAPOT    X
+#define MPUADDR5  0x220057ff // NAPOT  R X
+#define MPUADDR6  0x220067ff // NAPOT   WX
+#define MPUADDR7  0x220077ff // NAPOT  RWX
+#define MPUADDR8  0x220087ff // NAPOT L
+#define MPUADDR9  0x220097ff // NAPOT LR
+#define MPUADDR10 0x2200a7ff // NAPOT L W
+#define MPUADDR11 0x2200b7ff // NAPOT LRW
+#define MPUADDR12 0x2200c7ff // NAPOT L  X
+#define MPUADDR13 0x2200d7ff // NAPOT LR X
+#define MPUADDR14 0x2200e7ff // NAPOT L WX
+#define MPUADDR15 0x2200f7ff // NAPOT LRWX
 
 .global _start
 _start:
@@ -292,7 +292,8 @@ test6:
     // attempt write to restricted MPU region
     la SEPC, test7
     li SCAUSE, STORE_PAGE
-    sw x7, 0x10(x6)
+    li x6, 0x88000000
+    sw x7, 0x00(x6)
     j fail
 
 test7:
