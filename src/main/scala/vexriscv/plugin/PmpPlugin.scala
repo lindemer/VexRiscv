@@ -125,10 +125,11 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
     val csrService = pipeline.service(classOf[CsrInterface])
     val privilegeService = pipeline.service(classOf[PrivilegeService])
 
-    val pmpaddr, mpuaddr = Mem(UInt(xlen bits), regions)
-    val pmpcfg, mpucfg = Vector.fill(regions)(Reg(Bits(8 bits)) init(0))
-    val basePmp, maskPmp = Vector.fill(regions)(Reg(UInt(xlen - cutoff bits)))
-    val baseMpu, maskMpu = Vector.fill(regions)(Reg(UInt(xlen - cutoff bits)))
+    val pmp, mpu = pipeline plug new Area {
+      val addr = Mem(UInt(xlen bits), regions)
+      val cfg = Vector.fill(regions)(Reg(Bits(8 bits)) init(0))
+      val base, mask = Vector.fill(regions)(Reg(UInt(xlen - cutoff bits)))
+    }
 
     def mMode : Bool = privilegeService.isMachine()
     def sMode : Bool = privilegeService.isSupervisor()
@@ -141,65 +142,69 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
       val fsmComplete = False
       val hazardFree = csrService.isHazardFree()
 
-      val csrAddress = input(INSTRUCTION)(csrRange)
-      val ___Ncfg = csrAddress(log2Up(regions) - 1 downto 0).asUInt
-      val ___cfgN = ___Ncfg(log2Up(regions) - 3 downto 0)
-      val pmpcfgCsr = input(INSTRUCTION)(31 downto 24) === 0x3a
-      val pmpaddrCsr = input(INSTRUCTION)(31 downto 24) === 0x3b
-      val mpucfgCsr = input(INSTRUCTION)(31 downto 24) === 0x90
-      val mpuaddrCsr = input(INSTRUCTION)(31 downto 24) === 0x91
+      val csr = new Area {
+        val address = input(INSTRUCTION)(csrRange)
+        val ___Ncfg = address(log2Up(regions) - 1 downto 0).asUInt
+        val ___cfgN = ___Ncfg(log2Up(regions) - 3 downto 0)
+        val isPmpCfg = input(INSTRUCTION)(31 downto 24) === 0x3a
+        val isPmpAddr = input(INSTRUCTION)(31 downto 24) === 0x3b
+        val isMpuCfg = input(INSTRUCTION)(31 downto 24) === 0x90
+        val isMpuAddr = input(INSTRUCTION)(31 downto 24) === 0x91
+      }
 
-      val ___Ncfg_ = Reg(UInt(log2Up(regions) bits))
-      val ___cfgN_ = Reg(UInt(log2Up(regions) - 2 bits))
-      val pmpcfgCsr_, pmpaddrCsr_ = RegInit(False)
-      val mpucfgCsr_, mpuaddrCsr_ = RegInit(False)
-      val writeData_ = Reg(Bits(xlen bits))
+      val save = new Area {
+        val ___Ncfg = Reg(UInt(log2Up(regions) bits))
+        val ___cfgN = Reg(UInt(log2Up(regions) - 2 bits))
+        val isPmpCfg, isPmpAddr = RegInit(False)
+        val isMpuCfg, isMpuAddr = RegInit(False)
+        val writeData = Reg(Bits(xlen bits))
+      }
 
       csrService.duringAnyRead {
         when (mMode) {
-          when (pmpcfgCsr) {
+          when (csr.isPmpCfg) {
             csrService.allowCsr()
             csrService.readData() :=
-              pmpcfg(___cfgN @@ U(3, 2 bits)) ##
-              pmpcfg(___cfgN @@ U(2, 2 bits)) ##
-              pmpcfg(___cfgN @@ U(1, 2 bits)) ##
-              pmpcfg(___cfgN @@ U(0, 2 bits))
+              pmp.cfg(csr.___cfgN @@ U(3, 2 bits)) ##
+              pmp.cfg(csr.___cfgN @@ U(2, 2 bits)) ##
+              pmp.cfg(csr.___cfgN @@ U(1, 2 bits)) ##
+              pmp.cfg(csr.___cfgN @@ U(0, 2 bits))
           }
-          when (pmpaddrCsr) {
+          when (csr.isPmpAddr) {
             csrService.allowCsr()
-            csrService.readData() := pmpaddr(___Ncfg).asBits
+            csrService.readData() := pmp.addr(csr.___Ncfg).asBits
           }
         }
         when (mMode | sMode) {
-          when (mpucfgCsr) {
+          when (csr.isMpuCfg) {
             csrService.allowCsr()
             csrService.readData() :=
-              mpucfg(___cfgN @@ U(3, 2 bits)) ##
-              mpucfg(___cfgN @@ U(2, 2 bits)) ##
-              mpucfg(___cfgN @@ U(1, 2 bits)) ##
-              mpucfg(___cfgN @@ U(0, 2 bits))
+              mpu.cfg(csr.___cfgN @@ U(3, 2 bits)) ##
+              mpu.cfg(csr.___cfgN @@ U(2, 2 bits)) ##
+              mpu.cfg(csr.___cfgN @@ U(1, 2 bits)) ##
+              mpu.cfg(csr.___cfgN @@ U(0, 2 bits))
           }
-          when (mpuaddrCsr) {
+          when (csr.isMpuAddr) {
             csrService.allowCsr()
-            csrService.readData() := mpuaddr(___Ncfg).asBits
+            csrService.readData() := mpu.addr(csr.___Ncfg).asBits
           }
         }
       }
 
       csrService.duringAnyWrite {
-        when (((pmpcfgCsr | pmpaddrCsr) & mMode) |
-              ((mpucfgCsr | mpuaddrCsr) & (mMode | sMode))) {
+        when (((csr.isPmpCfg | csr.isPmpAddr) & mMode) |
+              ((csr.isMpuCfg | csr.isMpuAddr) & (mMode | sMode))) {
           csrService.allowCsr()
           arbitration.haltItself := !fsmComplete
-          when (!fsmPending) {
+          when (!fsmPending && hazardFree) {
             fsmPending := True
-            writeData_ := csrService.writeData()
-            ___Ncfg_ := ___Ncfg
-            ___cfgN_ := ___cfgN
-            pmpcfgCsr_ := pmpcfgCsr
-            pmpaddrCsr_ := pmpaddrCsr
-            mpucfgCsr_ := mpucfgCsr
-            mpuaddrCsr_ := mpuaddrCsr
+            save.writeData := csrService.writeData()
+            save.___Ncfg := csr.___Ncfg
+            save.___cfgN := csr.___cfgN
+            save.isPmpCfg := csr.isPmpCfg
+            save.isPmpAddr := csr.isPmpAddr
+            save.isMpuCfg := csr.isMpuCfg
+            save.isMpuAddr := csr.isMpuAddr
           }
         }
       }
@@ -216,7 +221,7 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
             fsmCounter := 0
           }
           whenIsActive {
-            when (fsmPending & hazardFree) {
+            when (fsmPending) {
               goto(stateWrite)
             }
           }
@@ -224,28 +229,28 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
 
         val stateWrite : State = new State {
           whenIsActive {
-            when (pmpcfgCsr_) {
-              val overwrite = writeData_.subdivideIn(8 bits)
+            when (save.isPmpCfg) {
+              val overwrite = save.writeData.subdivideIn(8 bits)
               for (i <- 0 until 4) {
-                when (~pmpcfg(___cfgN_ @@ U(i, 2 bits))(lBit)) {
-                  pmpcfg(___cfgN_ @@ U(i, 2 bits)).assignFromBits(overwrite(i))
+                when (~pmp.cfg(save.___cfgN @@ U(i, 2 bits))(lBit)) {
+                  pmp.cfg(save.___cfgN @@ U(i, 2 bits)).assignFromBits(overwrite(i))
                 }
               }
               goto(stateCfg)
             }
-            when (pmpaddrCsr_) {
-              when (~pmpcfg(___Ncfg_)(lBit)) {
-                pmpaddr(___Ncfg_) := writeData_.asUInt
+            when (save.isPmpAddr) {
+              when (~pmp.cfg(save.___Ncfg)(lBit)) {
+                pmp.addr(save.___Ncfg) := save.writeData.asUInt
               }
               goto(stateAddr)
             }
-            when (mpucfgCsr_) {
-              val overwrite = writeData_.subdivideIn(8 bits)
-              for (i <- 0 until 4) mpucfg(___cfgN_ @@ U(i, 2 bits)).assignFromBits(overwrite(i))
+            when (save.isMpuCfg) {
+              val overwrite = save.writeData.subdivideIn(8 bits)
+              for (i <- 0 until 4) mpu.cfg(save.___cfgN @@ U(i, 2 bits)).assignFromBits(overwrite(i))
               goto(stateCfg)
             }
-            when (mpuaddrCsr_) {
-              mpuaddr(___Ncfg_) := writeData_.asUInt
+            when (save.isMpuAddr) {
+              mpu.addr(save.___Ncfg) := save.writeData.asUInt
               goto(stateAddr)
             }
           }
@@ -253,7 +258,7 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
         }
 
         val stateCfg : State = new State {
-          onEntry (fsmCounter := ___cfgN_ @@ U(0, 2 bits))
+          onEntry (fsmCounter := save.___cfgN @@ U(0, 2 bits))
           whenIsActive {
             fsmCounter := fsmCounter + 1
             when (fsmCounter(1 downto 0) === 3) {
@@ -263,25 +268,25 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
         }
 
         val stateAddr : State = new State {
-          onEntry (fsmCounter := ___Ncfg_)
+          onEntry (fsmCounter := save.___Ncfg)
           whenIsActive (goto(stateIdle))
         }
 
-        when (pmpcfgCsr_) {
-          setter.io.addr := pmpaddr(fsmCounter)
-        }.elsewhen (mpucfgCsr_) {
-          setter.io.addr := mpuaddr(fsmCounter)
+        when (save.isPmpCfg) {
+          setter.io.addr := pmp.addr(fsmCounter)
+        }.elsewhen (save.isMpuCfg) {
+          setter.io.addr := mpu.addr(fsmCounter)
         } otherwise {
-          setter.io.addr := writeData_.asUInt
+          setter.io.addr := save.writeData.asUInt
         }
         
         when (fsmEnable) {
-          when ((pmpcfgCsr_ | pmpaddrCsr_) & ~pmpcfg(fsmCounter)(lBit)) {
-            basePmp(fsmCounter) := setter.io.base
-            maskPmp(fsmCounter) := setter.io.mask
+          when ((save.isPmpCfg | save.isPmpAddr) & ~pmp.cfg(fsmCounter)(lBit)) {
+            pmp.base(fsmCounter) := setter.io.base
+            pmp.mask(fsmCounter) := setter.io.mask
           } otherwise {
-            baseMpu(fsmCounter) := setter.io.base
-            maskMpu(fsmCounter) := setter.io.mask
+            mpu.base(fsmCounter) := setter.io.base
+            mpu.mask(fsmCounter) := setter.io.mask
           }
         }
       }
@@ -290,14 +295,14 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
     pipeline plug new Area {
       def getPmpHits(address : UInt) = {
         (0 until regions).map(i =>
-            ((address & maskPmp(U(i, log2Up(regions) bits))) === basePmp(U(i, log2Up(regions) bits))) & 
-            (pmpcfg(i)(lBit) | ~mMode) & (pmpcfg(i)(aBits) === NAPOT)
+            ((address & pmp.mask(U(i, log2Up(regions) bits))) === pmp.base(U(i, log2Up(regions) bits))) & 
+            (pmp.cfg(i)(lBit) | ~mMode) & (pmp.cfg(i)(aBits) === NAPOT)
         )
       }
       def getMpuHits(address : UInt) = {
         (0 until regions).map(i =>
-            ((address & maskMpu(U(i, log2Up(regions) bits))) === baseMpu(U(i, log2Up(regions) bits))) & 
-             (mpucfg(i)(aBits) === NAPOT)
+            ((address & mpu.mask(U(i, log2Up(regions) bits))) === mpu.base(U(i, log2Up(regions) bits))) & 
+             (mpu.cfg(i)(aBits) === NAPOT)
         )
       }
       def getAccess(cfg : Vector[Bits], hits : IndexedSeq[Bool], bit : Int) = {
@@ -315,11 +320,11 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
 
         val pmpHits = getPmpHits(address(31 downto cutoff))
         val mpuHits = getMpuHits(address(31 downto cutoff))
-        val pmpR = getAccess(pmpcfg, pmpHits, rBit)
-        val pmpW = getAccess(pmpcfg, pmpHits, wBit)
-        val mpuL = getAccess(mpucfg, mpuHits, lBit)
-        val mpuR = (uMode & getAccess(mpucfg, mpuHits, rBit)) | (sMode & ~mpuL)
-        val mpuW = (uMode & getAccess(mpucfg, mpuHits, wBit)) | (sMode & ~mpuL)
+        val pmpR = getAccess(pmp.cfg, pmpHits, rBit)
+        val pmpW = getAccess(pmp.cfg, pmpHits, wBit)
+        val mpuL = getAccess(mpu.cfg, mpuHits, lBit)
+        val mpuR = (uMode & getAccess(mpu.cfg, mpuHits, rBit)) | (sMode & ~mpuL)
+        val mpuW = (uMode & getAccess(mpu.cfg, mpuHits, wBit)) | (sMode & ~mpuL)
 
         when(~pmpHits.orR) {
           dPort.bus.rsp.isPaging := False
@@ -350,9 +355,9 @@ class PmpPlugin(regions : Int, granularity : Int, ioRange : UInt => Bool) extend
 
         val pmpHits = getPmpHits(address(31 downto cutoff))
         val mpuHits = getMpuHits(address(31 downto cutoff))
-        val pmpX = getAccess(pmpcfg, pmpHits, xBit)
-        val mpuL = getAccess(mpucfg, mpuHits, lBit)
-        val mpuX = (uMode & getAccess(mpucfg, mpuHits, xBit)) | (sMode & ~mpuL)
+        val pmpX = getAccess(pmp.cfg, pmpHits, xBit)
+        val mpuL = getAccess(mpu.cfg, mpuHits, lBit)
+        val mpuX = (uMode & getAccess(mpu.cfg, mpuHits, xBit)) | (sMode & ~mpuL)
 
         when(~pmpHits.orR) {
           iPort.bus.rsp.isPaging := False
